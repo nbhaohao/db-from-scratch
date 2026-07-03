@@ -127,6 +127,10 @@ func (kv *KV) Del(key []byte) (deleted bool, err error) {
 	return true, nil
 }
 
+// 你来实现（合并 MemTable 和 SSTable 做查询:两层都要看，归并结果，再滤掉墓碑）:
+//  1. m := MergedSortedKV{&kv.mem, &kv.main}(mem 在前 = 优先级高)
+//  2. iter, err := m.Seek(key)(0605 给 MergedSortedKV 新增的 Seek，k 路归并定位；出错 return nil, err)
+//  3. return filterDeleted(iter)——跳过开头的墓碑并包一层 NoDeletedIter(gen 已提供)
 func (kv *KV) Seek(key []byte) (SortedKVIter, error)
 
 func filterDeleted(iter SortedKVIter) (SortedKVIter, error) {
@@ -211,6 +215,14 @@ func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error) {
 	return &RangedKVIter{iter: iter, stop: stop, desc: desc}, nil
 }
 
+// 你来实现（把 MemTable(log) 合并进 SSTable、产出新 SSTable、再清空 log。这就是 copy-on-write:
+// 先写全新文件，再用 rename 原子替换旧文件，最后清空 log。分 3 步）:
+//  1. 合并到临时文件:在 kv.main 同目录建临时文件(os.CreateTemp(path.Dir(...)))，file := SortedFile{FileName: tmp}，
+//     m := MergedSortedKV{&kv.mem, &kv.main}，file.CreateFromSorted(m) 把两层合并写出(出错 return err)。
+//     记得 defer os.Remove(tmp) 清掉失败残留
+//  2. 原子替换:关掉旧 kv.main、关掉刚写好的 file，renameSync(file.FileName, kv.main.FileName)(rename + 对目录 fsync)。
+//     替换失败时尽量把 kv.main 重新 Open 回来再 return err；成功后 kv.main.Open() 重新打开这个新文件
+//  3. 清空:kv.mem.Clear() + return kv.log.Truncate()(数据已进 SSTable，log 可以丢了)
 func (kv *KV) Compact() error
 
 // UzBVUkNF https://systems-programming.org/

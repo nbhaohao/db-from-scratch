@@ -82,8 +82,17 @@ func (arr *SortedArray) Get(key []byte) (val []byte, ok bool, err error) {
 	return nil, false, nil
 }
 
+// 你来实现（在排序数组里插入或更新一对 KV，保持 keys 有序。这段就是从原来 KV 里搬过来的逻辑）:
+//  1. idx, ok := slices.BinarySearchFunc(arr.keys, key, bytes.Compare) 找位置
+//  2. updated = !ok || !bytes.Equal(val, arr.vals[idx])(不存在、或值真的变了才算更新)
+//  3. 若 updated:ok(已存在)→ arr.vals[idx] = val 原地改；否则用 slices.Insert 在 idx 处把 key、val 各插进去
+//  4. return updated, nil
 func (arr *SortedArray) Set(key []byte, val []byte) (updated bool, err error)
 
+// 你来实现（从排序数组里删除 key。0603 只有内存一层，还没 SSTable，直接物理删除即可）:
+//  1. idx, ok := slices.BinarySearchFunc(arr.keys, key, bytes.Compare)
+//  2. 存在(ok)→ slices.Delete 从 arr.keys、arr.vals 各删掉 [idx, idx+1)，return true, nil
+//  3. 不存在 → return false, nil
 func (arr *SortedArray) Del(key []byte) (deleted bool, err error)
 
 // UzBVUkNF https://systems-programming.org/

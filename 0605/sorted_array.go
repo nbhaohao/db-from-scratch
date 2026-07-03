@@ -85,8 +85,21 @@ func (arr *SortedArray) Key(i int) []byte {
 	return arr.keys[i]
 }
 
+// 你来实现（插入/更新一对 KV。0605 给 SortedArray 加了 deleted 墓碑标记，Set 要把该位置的墓碑清掉）:
+//  1. idx, ok := slices.BinarySearchFunc(arr.keys, key, bytes.Compare)
+//  2. updated = !ok || arr.deleted[idx] || !bytes.Equal(val, arr.vals[idx])
+//     (不存在、或原来是墓碑、或值变了都算更新——"复活一个被删的 key"也是更新)
+//  3. 若 updated:ok(已存在)→ arr.vals[idx]=val 且 arr.deleted[idx]=false(清墓碑)；
+//     否则用 slices.Insert 在 idx 处把 key、val 各插进去，同时给 arr.deleted 插入 false
+//  4. return updated, nil
 func (arr *SortedArray) Set(key []byte, val []byte) (updated bool, err error)
 
+// 你来实现（删除一对 KV。两层结构下上层不能物理删——否则会把下层 SSTable 里的旧值查出来，
+// 所以要留一个 deleted=true 的墓碑盖住下层）:
+//  1. idx, ok := slices.BinarySearchFunc(...)；exist := ok && !arr.deleted[idx](真存在 = 有 key 且不是墓碑)
+//  2. 若 exist:arr.vals[idx]=nil、arr.deleted[idx]=true(就地变墓碑)，return true, nil
+//  3. 否则:在 idx 处 slices.Insert 一个 val=nil、deleted=true 的墓碑，return false, nil
+//     (即使本层没有这个 key 也要插墓碑，因为它可能藏在下层 SSTable 里)
 func (arr *SortedArray) Del(key []byte) (deleted bool, err error)
 
 // UzBVUkNF https://systems-programming.org/

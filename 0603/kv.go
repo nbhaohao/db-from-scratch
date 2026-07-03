@@ -57,12 +57,25 @@ const (
 	ModeUpdate UpdateMode = 2 // update existing
 )
 
+// 你来实现（写入一对 KV:先按 mode 决定该不该写，再落 log(WAL)，再更新内存。逻辑跟前几章的
+// SetEx 一样，只是内存结构换成了 kv.mem(SortedArray)——写内存改调 kv.mem.Set）:
+//  1. oldVal, exist, err := kv.Get(key)(出错 return false, err)
+//  2. 按 mode 定 updated:ModeUpsert = !exist || !bytes.Equal(oldVal,val)；ModeInsert = !exist；
+//     ModeUpdate = exist && !bytes.Equal(oldVal,val)；default panic("unreachable")
+//  3. 若 updated:先 kv.log.Write(&Entry{key:key, val:val})(先写日志再改内存，出错 return false,err)；
+//     再 _, err = kv.mem.Set(key, val)；check(err == nil)
+//  4. return updated, nil
 func (kv *KV) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error)
 
 func (kv *KV) Set(key []byte, val []byte) (updated bool, err error) {
 	return kv.SetEx(key, val, ModeUpsert)
 }
 
+// 你来实现（删除一对 KV:先探是否存在，再从内存删，再落一条"删除"日志）:
+//  1. _, exist, err := kv.Get(key)；err != nil || !exist → return false, err(不存在直接返回)
+//  2. _, err = kv.mem.Del(key)；check(err == nil)
+//  3. kv.log.Write(&Entry{key:key, deleted:true})——deleted 标记，重放 log 时据此抹掉该 key(出错 return false,err)
+//  4. return true, nil
 func (kv *KV) Del(key []byte) (deleted bool, err error)
 
 func (kv *KV) Seek(key []byte) (SortedKVIter, error) {

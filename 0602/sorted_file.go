@@ -123,8 +123,26 @@ func (file *SortedFile) Iter() (SortedKVIter, error) {
 	return iter, nil
 }
 
+// 你来实现（读出 SSTable 里第 pos 对 KV，跟 CreateFromSorted 的写入格式反着读。
+// 数据在硬盘上，用 fp.ReadAt(buf, offset) 从指定位置读，返回的 error 要透传上去）:
+//  1. check(0 <= pos && pos < file.nkeys) 越界防呆
+//  2. 读偏移量数组第 pos 项(位置 8+8*pos，8B):ReadAt 到 buf[:8]（出错 return nil,nil,err），
+//     offset := int64(LittleEndian.Uint64(buf[:8]))——第 pos 个 KV 在文件里的起点
+//  3. 合法性检查:offset 不该落进头部区(8+8*nkeys)里，否则文件损坏 → return errors.New("corrupted file")
+//  4. 在 offset 处读 4+4 字节，拆出 klen、vlen(LittleEndian.Uint32(buf[0:4]) / buf[4:8])
+//  5. data := make([]byte, klen+vlen)；在 offset+8 处 ReadAt(data) 一次读完 key+val
+//  6. return data[:klen], data[klen:], nil(前段 key、后段 val)
 func (file *SortedFile) index(pos int) (key []byte, val []byte, err error)
 
+// 你来实现（二分查找第一个 >= key 的位置，返回定位好的迭代器。注意:index() 会返回 IO error，
+// 所以不能用 slices.BinarySearch 这类不透传 error 的封装，要手写二分）:
+//  1. 手写二分:lo, hi := 0, file.nkeys；for lo < hi:mid := lo+(hi-lo)/2，
+//     k, _, err := file.index(mid)（出错 return nil, err），bytes.Compare(key, k):
+//     大于 0 → lo=mid+1；小于 0 → hi=mid；等于 0 → 命中，pos 就是 mid
+//     循环自然结束时 pos = lo(第一个 >= key 的位置，可能等于 nkeys)
+//  2. iter := &SortedFileIter{file: file, pos: pos}
+//  3. iter.loadCurrent() 把该位置的 KV 读进 iter(出错 return nil, err)
+//  4. return iter, nil
 func (file *SortedFile) Seek(key []byte) (SortedKVIter, error)
 
 // UzBVUkNF https://systems-programming.org/
