@@ -47,6 +47,13 @@ func (row Row) EncodeVal(schema *Schema) (val []byte) {
 
 var ErrOutOfRange = errors.New("out of range")
 
+// 你来实现（EncodeKey 的逆过程；注意这里"表名前缀不对"要返回哨兵错误 ErrOutOfRange 而不是普通 error——
+// 范围扫描时靠这个信号判断"扫到别的表的数据了，该停了"，和真正的解析失败要区分开）：
+//  1. check(len(row) == len(schema.Cols))
+//  2. key 长度不够 len(schema.Table)+1，或前缀不等于 schema.Table+"\x00"：return ErrOutOfRange（不是 errors.New）
+//  3. key = key[len(schema.Table)+1:] 去掉前缀
+//  4. 遍历 schema.PKey：row[idx] = Cell{Type: schema.Cols[idx].Type}，key, err = row[idx].DecodeKey(key)，出错直接 return
+//  5. len(key) != 0 报 "trailing garbage"（这个用普通 errors.New），否则 return nil
 func (row Row) DecodeKey(schema *Schema, key []byte) (err error)
 
 func (row Row) DecodeVal(schema *Schema, val []byte) (err error) {

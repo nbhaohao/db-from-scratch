@@ -60,6 +60,12 @@ type RowIterator struct {
 	row    Row
 }
 
+// 你来实现（把底层 KVIterator 当前指向的一对 key/val 解码成一行 Row；返回 false 表示"这一行不属于这张表了，扫描该停"）：
+//  1. !iter.Valid()：底层游标已经越界，return false, nil
+//  2. row.DecodeKey(schema, iter.Key())：err == ErrOutOfRange 说明扫到别的表的数据了（表名前缀不对），return false, nil；
+//     err != nil 是真正的解析错误，return false, err
+//  3. row.DecodeVal(schema, iter.Val())，出错 return false, err
+//  4. 都通过：return true, nil
 func decodeKVIter(schema *Schema, iter *KVIterator, row Row) (bool, error)
 
 func (iter *RowIterator) Valid() bool {
@@ -79,6 +85,11 @@ func (iter *RowIterator) Next() (err error) {
 	return err
 }
 
+// 你来实现（定位到一张表里某个位置，返回一个可以 Next() 逐行往后扫的 RowIterator；
+// 传进来的 row 通常是只填了部分主键列的"前缀"，靠 EncodeKey 编码复用底层 KV.Seek 的二分查找）：
+//  1. iter, err := db.KV.Seek(row.EncodeKey(schema))，出错 return nil, err
+//  2. valid, err := decodeKVIter(schema, iter, row) 立即尝试解出第一行；出错 return nil, err
+//  3. return &RowIterator{schema, iter, valid, row}, nil
 func (db *DB) Seek(schema *Schema, row Row) (*RowIterator, error)
 
 type SQLResult struct {

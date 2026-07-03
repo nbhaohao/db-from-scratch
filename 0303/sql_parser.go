@@ -147,10 +147,26 @@ func (p *Parser) parseInt(out *Cell) (err error) {
 	return nil
 }
 
+// 你来实现（解析一个 "列名 = 值" 的等值条件）：
+//  1. out.column, ok := p.tryName()；拿不到列名报 "expect column"
+//  2. p.tryPunctuation("=") 匹配等号，匹配不到报 "expect ="
+//  3. 剩下交给 p.parseValue(&out.value) 解析等号右边的值，直接 return 它的结果
 func (p *Parser) parseEqual(out *NamedCell) error
 
+// 你来实现（解析 SELECT col1, col2 FROM table WHERE ...）：
+//  1. p.tryKeyword("SELECT") 打头，失败报 "expect keyword"
+//  2. for !p.tryKeyword("FROM")：不断读列名 append 进 out.cols；除第一个列名外，读之前先要求 tryPunctuation(",")
+//  3. 循环结束若 out.cols 为空，报 "expect column list"
+//  4. FROM 后 p.tryName() 拿表名存 out.table，拿不到报 "expect table name"
+//  5. 剩下交给 p.parseWhere(&out.keys)，直接 return 它的结果
 func (p *Parser) parseSelect(out *StmtSelect) error
 
+// 你来实现（解析 WHERE col=val AND col=val ... ;）：
+//  1. p.tryKeyword("WHERE") 打头，失败报 "expect keyword"
+//  2. for !p.tryPunctuation(";")：每轮 new 一个 NamedCell，除第一轮外先要求 tryKeyword("AND")；
+//     调 p.parseEqual(&expr) 解析这一个等值条件，append 进 *out
+//  3. 循环结束若 *out 为空（一个条件都没有），报 "expect where clause"
+//  4. 都通过 return nil
 func (p *Parser) parseWhere(out *[]NamedCell) error
 
 func (p *Parser) isEnd() bool {

@@ -112,6 +112,17 @@ type RangeReq struct {
 	Stop     []Cell
 }
 
+// 你来实现（把业务层的 RangeReq(起止条件+比较符) 翻译成 KV.Range 要的字节边界 + 方向，
+// 核心是想清楚两件事：①往哪个方向扫（desc）②每个边界要不要加 0xff 后缀（suffixPositive)）：
+//  1. 断言 req.StartCmp 和 req.StopCmp 方向相反（一个降序一个升序，不然区间无意义）：
+//     可以写一个小函数/switch：OP_LE、OP_LT → 降序；OP_GE、OP_GT → 升序；用 check(...) 断言两者不相等
+//  2. suffixPositive(op)：OP_LE、OP_GT → true（该边界要加 0xff 后缀，见 EncodeKeyPrefix 的注释）；
+//     OP_GE、OP_LT → false；用这个规则算出 start := EncodeKeyPrefix(schema, req.Start, ...) 和
+//     stop := EncodeKeyPrefix(schema, req.Stop, ...)
+//  3. desc := req.StartCmp 是 OP_LE 或 OP_LT
+//  4. iter, err := db.KV.Range(start, stop, desc)，出错 return nil, err
+//  5. row := schema.NewRow()；valid, err := decodeKVIter(schema, iter, row)，出错 return nil, err
+//  6. return &RowIterator{schema, iter, valid, row}, nil
 func (db *DB) Range(schema *Schema, req *RangeReq) (*RowIterator, error)
 
 type SQLResult struct {

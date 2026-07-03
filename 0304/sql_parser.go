@@ -227,12 +227,32 @@ func (p *Parser) parseWhere(out *[]NamedCell) error {
 	return nil
 }
 
+// 你来实现（解析 CREATE TABLE 后半段：表名 + (列定义/PRIMARY KEY逗号列表) + 分号）：
+//  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
+//  2. p.parseCommaList(func() error { return p.parseCreateTableItem(out) })——每项要么是一列定义要么是 PRIMARY KEY 列表，parseCreateTableItem 已实现好
+//  3. p.tryPunctuation(";") 收尾，失败报 "expect ;"
 func (p *Parser) parseCreateTable(out *StmtCreatTable) error
 
+// 你来实现（解析 INSERT INTO 后半段：表名 + VALUES + 逗号分隔的值列表 + 分号）：
+//  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
+//  2. p.tryKeyword("VALUES")，失败报 "expect VALUES"
+//  3. p.parseCommaList(func() error { return p.parseValueItem(&out.value) })——parseValueItem 已实现好
+//  4. p.tryPunctuation(";") 收尾，失败报 "expect ;"
 func (p *Parser) parseInsert(out *StmtInsert) error
 
+// 你来实现（解析 UPDATE table SET col=val, col=val ... WHERE ...）：
+//  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
+//  2. p.tryKeyword("SET")，失败报 "expect SET"
+//  3. for !p.tryKeyword("WHERE")：每轮 new 一个 NamedCell，除第一轮外先要求 tryKeyword(",")；
+//     调 p.parseEqual(&expr) 解析赋值，append 进 out.value
+//  4. 循环结束若 out.value 为空，报 "expect assignment list"
+//  5. 注意：上一步已经把 "WHERE" 关键字吃掉了，所以要先 p.pos -= len("WHERE") 把它吐回去，
+//     再交给 p.parseWhere(&out.keys) 重新按 WHERE 语法解析
 func (p *Parser) parseUpdate(out *StmtUpdate) error
 
+// 你来实现（解析 DELETE FROM 后半段：表名 + WHERE 条件，"FROM" 关键字已在 parseStmt 里吃掉了）：
+//  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
+//  2. 剩下交给 p.parseWhere(&out.keys)，直接 return 它的结果
 func (p *Parser) parseDelete(out *StmtDelete) error
 
 func (p *Parser) parseStmt() (out interface{}, err error) {

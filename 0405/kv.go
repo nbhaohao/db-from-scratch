@@ -183,6 +183,13 @@ func (iter *RangedKVIter) Next() error {
 	}
 }
 
+// 你来实现（定位到范围扫描的起点，desc 决定是升序还是降序；start/stop 已经是编码好的边界字节串，
+// 这层不用管业务语义，只管"从 start 开始，往 desc 方向走，用 stop 判断该不该停"）：
+//  1. iter, err := kv.Seek(start)（复用二分查找，定位到第一个 >= start 的位置），出错 return nil, err
+//  2. 降序扫描时 Seek 给的是">= start 的第一个位置"，但降序应该从 "<= start 的最后一个位置" 开始，
+//     所以：desc 为 true 且 (!iter.Valid() 或 iter.Key() > start)，说明 Seek 给多走了一步，
+//     调 iter.Prev() 退回一步；出错 return nil, err
+//  3. return &RangedKVIter{iter: *iter, stop: stop, desc: desc}, nil
 func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error)
 
 // UzBVUkNF https://systems-programming.org/
