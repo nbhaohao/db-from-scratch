@@ -113,22 +113,41 @@ type KVIterator struct {
 // 你来实现（定位到第一个 >= key 的位置，返回一个指向内存数组的迭代器）：
 //  1. slices.BinarySearchFunc(kv.keys, key, bytes.Compare) 拿到 pos（没找到时返回的就是应该插入的位置，正好是"第一个 >= key"）
 //  2. return &KVIterator{keys: kv.keys, vals: kv.vals, pos: pos}, nil
-func (kv *KV) Seek(key []byte) (*KVIterator, error)
+func (kv *KV) Seek(key []byte) (*KVIterator, error) {
+	pos, _ := slices.BinarySearchFunc(kv.keys, key, bytes.Compare)
+	return &KVIterator{keys: kv.keys, vals: kv.vals, pos: pos}, nil
+}
 
 func (iter *KVIterator) Valid() bool {
 	return 0 <= iter.pos && iter.pos < len(iter.keys)
 }
 
 // 你来实现（取当前位置的 key，先用 check(iter.Valid()) 断言游标没越界）
-func (iter *KVIterator) Key() []byte
+func (iter *KVIterator) Key() []byte {
+	check(iter.Valid())
+	return iter.keys[iter.pos]
+}
 
 // 你来实现（取当前位置的 val，先用 check(iter.Valid()) 断言游标没越界）
-func (iter *KVIterator) Val() []byte
+func (iter *KVIterator) Val() []byte {
+	check(iter.Valid())
+	return iter.vals[iter.pos]
+}
 
 // 你来实现（游标后移一格；已经在末尾就不动，别越界）
-func (iter *KVIterator) Next() error
+func (iter *KVIterator) Next() error {
+	if iter.pos < len(iter.keys) {
+		iter.pos++
+	}
+	return nil
+}
 
 // 你来实现（游标前移一格；已经在开头[-1]就不动，别越界）
-func (iter *KVIterator) Prev() error
+func (iter *KVIterator) Prev() error {
+	if iter.pos > -1 {
+		iter.pos--
+	}
+	return nil
+}
 
 // UzBVUkNF https://systems-programming.org/
