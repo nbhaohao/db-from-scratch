@@ -1,6 +1,7 @@
 package db0105
 
 import (
+	"io"
 	"os"
 )
 
@@ -31,6 +32,14 @@ func (log *Log) Write(ent *Entry) error {
 //     io.ErrUnexpectedEOF（文件大小不对/截断）、ErrBadSum（校验失败=torn write）
 //  3. 其他 err 照常返回；无错则 eof=false
 //     受损的只可能是最后一条（之前的都 fsync 成功过），忽略它 = 崩溃后恢复到上一个一致状态
-func (log *Log) Read(ent *Entry) (eof bool, err error)
+func (log *Log) Read(ent *Entry) (eof bool, err error) {
+	err = ent.Decode(log.fp)
+	if err == io.EOF || err == io.ErrUnexpectedEOF || err == ErrBadSum {
+		return true, nil
+	} else if err != nil {
+		return false, err
+	}
+	return false, nil
+}
 
 // UzBVUkNF https://systems-programming.org/
