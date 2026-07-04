@@ -151,7 +151,17 @@ func (p *Parser) parseInt(out *Cell) (err error) {
 //  1. out.column, ok := p.tryName()；拿不到列名报 "expect column"
 //  2. p.tryPunctuation("=") 匹配等号，匹配不到报 "expect ="
 //  3. 剩下交给 p.parseValue(&out.value) 解析等号右边的值，直接 return 它的结果
-func (p *Parser) parseEqual(out *NamedCell) error
+func (p *Parser) parseEqual(out *NamedCell) error {
+	name, ok := p.tryName()
+	if !ok {
+		return errors.New("expect column")
+	}
+	out.column = name
+	if !p.tryPunctuation("=") {
+		return errors.New("expect =")
+	}
+	return p.parseValue(&out.value)
+}
 
 // 你来实现（解析 SELECT col1, col2 FROM table WHERE ...）：
 //  1. p.tryKeyword("SELECT") 打头，失败报 "expect keyword"
@@ -159,7 +169,30 @@ func (p *Parser) parseEqual(out *NamedCell) error
 //  3. 循环结束若 out.cols 为空，报 "expect column list"
 //  4. FROM 后 p.tryName() 拿表名存 out.table，拿不到报 "expect table name"
 //  5. 剩下交给 p.parseWhere(&out.keys)，直接 return 它的结果
-func (p *Parser) parseSelect(out *StmtSelect) error
+func (p *Parser) parseSelect(out *StmtSelect) error {
+	if !p.tryKeyword("SELECT") {
+		return errors.New("expect keyword")
+	}
+	for !p.tryKeyword("FROM") {
+		if len(out.cols) > 0 && !p.tryPunctuation(",") {
+			break
+		}
+		name, ok := p.tryName()
+		if !ok {
+			break
+		}
+		out.cols = append(out.cols, name)
+	}
+	if len(out.cols) == 0 {
+		return errors.New("expect column list")
+	}
+	table, ok := p.tryName()
+	if !ok {
+		return errors.New("expect table name")
+	}
+	out.table = table
+	return p.parseWhere(&out.keys)
+}
 
 // 你来实现（解析 WHERE col=val AND col=val ... ;）：
 //  1. p.tryKeyword("WHERE") 打头，失败报 "expect keyword"
@@ -167,7 +200,25 @@ func (p *Parser) parseSelect(out *StmtSelect) error
 //     调 p.parseEqual(&expr) 解析这一个等值条件，append 进 *out
 //  3. 循环结束若 *out 为空（一个条件都没有），报 "expect where clause"
 //  4. 都通过 return nil
-func (p *Parser) parseWhere(out *[]NamedCell) error
+func (p *Parser) parseWhere(out *[]NamedCell) error {
+	if !p.tryKeyword("WHERE") {
+		return errors.New("expect keyword")
+	}
+	for !p.tryPunctuation(";") {
+		if len(*out) > 0 && !p.tryKeyword("AND") {
+			break
+		}
+		var expr NamedCell
+		if err := p.parseEqual(&expr); err != nil {
+			return err
+		}
+		*out = append(*out, expr)
+	}
+	if len(*out) == 0 {
+		return errors.New("expect where clause")
+	}
+	return nil
+}
 
 func (p *Parser) isEnd() bool {
 	p.skipSpaces()
