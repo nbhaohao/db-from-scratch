@@ -1,5 +1,10 @@
 package db0401
 
+import (
+	"bytes"
+	"slices"
+)
+
 type KV struct {
 	log  Log
 	keys [][]byte
@@ -14,7 +19,42 @@ type KV struct {
 //     若上一个已放入的 key 和当前相同，先把上一个弹出（同 key 只保留最后一次的版本）；
 //     若当前 entry 不是删除标记（!ent.deleted），append 进 kv.keys/kv.vals
 //  5. return nil
-func (kv *KV) Open() error
+func (kv *KV) Open() error {
+	if err := kv.log.Open(); err != nil {
+		return err
+	}
+
+	var entries []Entry
+	for {
+		var ent Entry
+		eof, err := kv.log.Read(&ent)
+		if err != nil {
+			return err
+		}
+		if eof {
+			break
+		}
+		entries = append(entries, ent)
+	}
+
+	slices.SortStableFunc(entries, func(a, b Entry) int {
+		return bytes.Compare(a.key, b.key)
+	})
+
+	kv.keys = kv.keys[:0]
+	kv.vals = kv.vals[:0]
+	for _, ent := range entries {
+		if len(kv.keys) > 0 && bytes.Equal(kv.keys[len(kv.keys)-1], ent.key) {
+			kv.keys = kv.keys[:len(kv.keys)-1]
+			kv.vals = kv.vals[:len(kv.vals)-1]
+		}
+		if !ent.deleted {
+			kv.keys = append(kv.keys, ent.key)
+			kv.vals = append(kv.vals, ent.val)
+		}
+	}
+	return nil
+}
 
 func (kv *KV) Close() error { return kv.log.Close() }
 
@@ -22,7 +62,13 @@ func (kv *KV) Close() error { return kv.log.Close() }
 //  1. slices.BinarySearchFunc(kv.keys, key, bytes.Compare) 返回 idx, ok
 //  2. ok 为 true：return kv.vals[idx], true, nil
 //  3. 否则：return nil, false, nil
-func (kv *KV) Get(key []byte) (val []byte, ok bool, err error)
+func (kv *KV) Get(key []byte) (val []byte, ok bool, err error) {
+	idx, ok := slices.BinarySearchFunc(kv.keys, key, bytes.Compare)
+	if ok {
+		return kv.vals[idx], true, nil
+	}
+	return nil, false, nil
+}
 
 type UpdateMode int
 
@@ -40,7 +86,35 @@ const (
 //  4. exist 为 true：直接 kv.vals[idx] = val 覆盖；exist 为 false：
 //     slices.Insert(kv.keys, idx, key) 和 slices.Insert(kv.vals, idx, val) 把新 key/val 插到排序应在的位置
 //  5. return（命名返回值 updated, err 已经在前面赋值过了）
-func (kv *KV) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error)
+func (kv *KV) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error) {
+	idx, exist := slices.BinarySearchFunc(kv.keys, key, bytes.Compare)
+	switch mode {
+	case ModeUpsert:
+		updated = !exist || !bytes.Equal(kv.vals[idx], val)
+	case ModeInsert:
+		updated = !exist
+	case ModeUpdate:
+		updated = exist && !bytes.Equal(kv.vals[idx], val)
+	default:
+		panic("unreachable")
+	}
+
+	if !updated {
+		return false, nil
+	}
+
+	if err = kv.log.Write(&Entry{key: key, val: val}); err != nil {
+		return false, err
+	}
+
+	if exist {
+		kv.vals[idx] = val
+	} else {
+		kv.keys = slices.Insert(kv.keys, idx, key)
+		kv.vals = slices.Insert(kv.vals, idx, val)
+	}
+	return updated, nil
+}
 
 func (kv *KV) Set(key []byte, val []byte) (updated bool, err error) {
 	return kv.SetEx(key, val, ModeUpsert)
@@ -51,6 +125,17 @@ func (kv *KV) Set(key []byte, val []byte) (updated bool, err error) {
 //  2. kv.log.Write(&Entry{key: key, deleted: true})，出错 return false, err
 //  3. slices.Delete(kv.keys, idx, idx+1) 和 slices.Delete(kv.vals, idx, idx+1) 摘掉这一项
 //  4. return true, nil
-func (kv *KV) Del(key []byte) (deleted bool, err error)
+func (kv *KV) Del(key []byte) (deleted bool, err error) {
+	idx, ok := slices.BinarySearchFunc(kv.keys, key, bytes.Compare)
+	if !ok {
+		return false, nil
+	}
+	if err := kv.log.Write(&Entry{key: key, deleted: true}); err != nil {
+		return false, err
+	}
+	kv.keys = slices.Delete(kv.keys, idx, idx+1)
+	kv.vals = slices.Delete(kv.vals, idx, idx+1)
+	return true, nil
+}
 
 // UzBVUkNF https://systems-programming.org/
