@@ -1,5 +1,7 @@
 package db0203
 
+import "bytes"
+
 type KV struct {
 	log Log
 	mem map[string][]byte
@@ -55,7 +57,24 @@ const (
 //  3. updated 才动手：先写 log（Entry{key, val}），成功后再改内存 map
 //     ——顺序不能反：崩溃时 log 有 mem 无可以恢复，反过来数据就丢了
 //  4. updated=false 时什么都不写——省掉无意义的 log 增长
-func (kv *KV) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error)
+func (kv *KV) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error) {
+	prev, exist := kv.mem[string(key)]
+	switch mode {
+	case ModeUpsert:
+		updated = !exist || !bytes.Equal(prev, val)
+	case ModeInsert:
+		updated = !exist
+	case ModeUpdate:
+		updated = exist && !bytes.Equal(prev, val)
+	}
+	if updated {
+		if err = kv.log.Write(&Entry{key: key, val: val}); err != nil {
+			return false, err
+		}
+		kv.mem[string(key)] = val
+	}
+	return
+}
 
 func (kv *KV) Set(key []byte, val []byte) (updated bool, err error) {
 	return kv.SetEx(key, val, ModeUpsert)
