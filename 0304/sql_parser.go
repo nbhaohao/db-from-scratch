@@ -227,18 +227,106 @@ func (p *Parser) parseWhere(out *[]NamedCell) error {
 	return nil
 }
 
+func (p *Parser) parseCommaList(item func() error) error {
+	if !p.tryPunctuation("(") {
+		return errors.New("expect (")
+	}
+	comma := false
+	for !p.tryPunctuation(")") {
+		if comma && !p.tryPunctuation(",") {
+			return errors.New("expect ,")
+		}
+		comma = true
+		if err := item(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Parser) parseNameItem(out *[]string) error {
+	name, ok := p.tryName()
+	if !ok {
+		return errors.New("expect name")
+	}
+	*out = append(*out, name)
+	return nil
+}
+
+func (p *Parser) parseCreateTableItem(out *StmtCreatTable) error {
+	if p.tryKeyword("PRIMARY", "KEY") {
+		return p.parseCommaList(func() error { return p.parseNameItem(&out.pkey) })
+	}
+
+	var ok bool
+	col := Column{}
+	if col.Name, ok = p.tryName(); !ok {
+		return errors.New("expect name")
+	}
+	kind, ok := p.tryName()
+	if !ok {
+		return errors.New("expect name")
+	}
+	switch kind {
+	case "int64":
+		col.Type = TypeI64
+	case "string":
+		col.Type = TypeStr
+	default:
+		return errors.New("unknown column type")
+	}
+	out.cols = append(out.cols, col)
+	return nil
+}
+
 // 你来实现（解析 CREATE TABLE 后半段：表名 + (列定义/PRIMARY KEY逗号列表) + 分号）：
 //  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
 //  2. p.parseCommaList(func() error { return p.parseCreateTableItem(out) })——每项要么是一列定义要么是 PRIMARY KEY 列表，parseCreateTableItem 已实现好
 //  3. p.tryPunctuation(";") 收尾，失败报 "expect ;"
-func (p *Parser) parseCreateTable(out *StmtCreatTable) error
+func (p *Parser) parseCreateTable(out *StmtCreatTable) error {
+	var ok bool
+	if out.table, ok = p.tryName(); !ok {
+		return errors.New("expect table name")
+	}
+	if err := p.parseCommaList(func() error { return p.parseCreateTableItem(out) }); err != nil {
+		return err
+	}
+	if !p.tryPunctuation(";") {
+		return errors.New("expect ;")
+	}
+	return nil
+}
+
+func (p *Parser) parseValueItem(out *[]Cell) error {
+	cell := Cell{}
+	if err := p.parseValue(&cell); err != nil {
+		return err
+	}
+	*out = append(*out, cell)
+	return nil
+}
 
 // 你来实现（解析 INSERT INTO 后半段：表名 + VALUES + 逗号分隔的值列表 + 分号）：
 //  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
 //  2. p.tryKeyword("VALUES")，失败报 "expect VALUES"
 //  3. p.parseCommaList(func() error { return p.parseValueItem(&out.value) })——parseValueItem 已实现好
 //  4. p.tryPunctuation(";") 收尾，失败报 "expect ;"
-func (p *Parser) parseInsert(out *StmtInsert) error
+func (p *Parser) parseInsert(out *StmtInsert) error {
+	var ok bool
+	if out.table, ok = p.tryName(); !ok {
+		return errors.New("expect table name")
+	}
+	if !p.tryKeyword("VALUES") {
+		return errors.New("expect VALUES")
+	}
+	if err := p.parseCommaList(func() error { return p.parseValueItem(&out.value) }); err != nil {
+		return err
+	}
+	if !p.tryPunctuation(";") {
+		return errors.New("expect ;")
+	}
+	return nil
+}
 
 // 你来实现（解析 UPDATE table SET col=val, col=val ... WHERE ...）：
 //  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
@@ -248,12 +336,41 @@ func (p *Parser) parseInsert(out *StmtInsert) error
 //  4. 循环结束若 out.value 为空，报 "expect assignment list"
 //  5. 注意：上一步已经把 "WHERE" 关键字吃掉了，所以要先 p.pos -= len("WHERE") 把它吐回去，
 //     再交给 p.parseWhere(&out.keys) 重新按 WHERE 语法解析
-func (p *Parser) parseUpdate(out *StmtUpdate) error
+func (p *Parser) parseUpdate(out *StmtUpdate) error {
+	var ok bool
+	if out.table, ok = p.tryName(); !ok {
+		return errors.New("expect table name")
+	}
+	if !p.tryKeyword("SET") {
+		return errors.New("expect SET")
+	}
+	for !p.tryKeyword("WHERE") {
+		expr := NamedCell{}
+		if len(out.value) > 0 && !p.tryKeyword(",") {
+			return errors.New("expect ,")
+		}
+		if err := p.parseEqual(&expr); err != nil {
+			return err
+		}
+		out.value = append(out.value, expr)
+	}
+	if len(out.value) == 0 {
+		return errors.New("expect assignment list")
+	}
+	p.pos -= len("WHERE")
+	return p.parseWhere(&out.keys)
+}
 
 // 你来实现（解析 DELETE FROM 后半段：表名 + WHERE 条件，"FROM" 关键字已在 parseStmt 里吃掉了）：
 //  1. out.table, ok := p.tryName()；拿不到报 "expect table name"
 //  2. 剩下交给 p.parseWhere(&out.keys)，直接 return 它的结果
-func (p *Parser) parseDelete(out *StmtDelete) error
+func (p *Parser) parseDelete(out *StmtDelete) error {
+	var ok bool
+	if out.table, ok = p.tryName(); !ok {
+		return errors.New("expect table name")
+	}
+	return p.parseWhere(&out.keys)
+}
 
 func (p *Parser) parseStmt() (out interface{}, err error) {
 	if p.tryKeyword("SELECT") {
