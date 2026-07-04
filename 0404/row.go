@@ -54,7 +54,29 @@ var ErrOutOfRange = errors.New("out of range")
 //  3. key = key[len(schema.Table)+1:] 去掉前缀
 //  4. 遍历 schema.PKey：row[idx] = Cell{Type: schema.Cols[idx].Type}，key, err = row[idx].DecodeKey(key)，出错直接 return
 //  5. len(key) != 0 报 "trailing garbage"（这个用普通 errors.New），否则 return nil
-func (row Row) DecodeKey(schema *Schema, key []byte) (err error)
+func (row Row) DecodeKey(schema *Schema, key []byte) (err error) {
+	check(len(row) == len(schema.Cols))
+
+	if len(key) < len(schema.Table)+1 {
+		return ErrOutOfRange
+	}
+	if string(key[:len(schema.Table)+1]) != schema.Table+"\x00" {
+		return ErrOutOfRange
+	}
+	key = key[len(schema.Table)+1:]
+
+	for _, idx := range schema.PKey {
+		row[idx] = Cell{Type: schema.Cols[idx].Type}
+		if key, err = row[idx].DecodeKey(key); err != nil {
+			return err
+		}
+	}
+
+	if len(key) != 0 {
+		return errors.New("trailing garbage")
+	}
+	return nil
+}
 
 func (row Row) DecodeVal(schema *Schema, val []byte) (err error) {
 	check(len(row) == len(schema.Cols))

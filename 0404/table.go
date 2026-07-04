@@ -66,7 +66,21 @@ type RowIterator struct {
 //     err != nil 是真正的解析错误，return false, err
 //  3. row.DecodeVal(schema, iter.Val())，出错 return false, err
 //  4. 都通过：return true, nil
-func decodeKVIter(schema *Schema, iter *KVIterator, row Row) (bool, error)
+func decodeKVIter(schema *Schema, iter *KVIterator, row Row) (bool, error) {
+	if !iter.Valid() {
+		return false, nil
+	}
+	if err := row.DecodeKey(schema, iter.Key()); err != nil {
+		if err == ErrOutOfRange {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := row.DecodeVal(schema, iter.Val()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
 func (iter *RowIterator) Valid() bool {
 	return iter.valid
@@ -90,7 +104,17 @@ func (iter *RowIterator) Next() (err error) {
 //  1. iter, err := db.KV.Seek(row.EncodeKey(schema))，出错 return nil, err
 //  2. valid, err := decodeKVIter(schema, iter, row) 立即尝试解出第一行；出错 return nil, err
 //  3. return &RowIterator{schema, iter, valid, row}, nil
-func (db *DB) Seek(schema *Schema, row Row) (*RowIterator, error)
+func (db *DB) Seek(schema *Schema, row Row) (*RowIterator, error) {
+	iter, err := db.KV.Seek(row.EncodeKey(schema))
+	if err != nil {
+		return nil, err
+	}
+	valid, err := decodeKVIter(schema, iter, row)
+	if err != nil {
+		return nil, err
+	}
+	return &RowIterator{schema, iter, valid, row}, nil
+}
 
 type SQLResult struct {
 	Updated int
