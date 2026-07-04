@@ -123,7 +123,44 @@ type RangeReq struct {
 //  4. iter, err := db.KV.Range(start, stop, desc)，出错 return nil, err
 //  5. row := schema.NewRow()；valid, err := decodeKVIter(schema, iter, row)，出错 return nil, err
 //  6. return &RowIterator{schema, iter, valid, row}, nil
-func (db *DB) Range(schema *Schema, req *RangeReq) (*RowIterator, error)
+func suffixPositive(op ExprOp) bool {
+	switch op {
+	case OP_LE, OP_GT:
+		return true
+	case OP_GE, OP_LT:
+		return false
+	default:
+		panic("unreachable")
+	}
+}
+
+func isDescending(op ExprOp) bool {
+	switch op {
+	case OP_LE, OP_LT:
+		return true
+	case OP_GE, OP_GT:
+		return false
+	default:
+		panic("unreachable")
+	}
+}
+
+func (db *DB) Range(schema *Schema, req *RangeReq) (*RowIterator, error) {
+	check(isDescending(req.StartCmp) != isDescending(req.StopCmp))
+	start := EncodeKeyPrefix(schema, req.Start, suffixPositive(req.StartCmp))
+	stop := EncodeKeyPrefix(schema, req.Stop, suffixPositive(req.StopCmp))
+	desc := isDescending(req.StartCmp)
+	iter, err := db.KV.Range(start, stop, desc)
+	if err != nil {
+		return nil, err
+	}
+	row := schema.NewRow()
+	valid, err := decodeKVIter(schema, iter, row)
+	if err != nil {
+		return nil, err
+	}
+	return &RowIterator{schema, iter, valid, row}, nil
+}
 
 type SQLResult struct {
 	Updated int

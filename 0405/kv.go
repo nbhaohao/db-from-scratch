@@ -190,6 +190,17 @@ func (iter *RangedKVIter) Next() error {
 //     所以：desc 为 true 且 (!iter.Valid() 或 iter.Key() > start)，说明 Seek 给多走了一步，
 //     调 iter.Prev() 退回一步；出错 return nil, err
 //  3. return &RangedKVIter{iter: *iter, stop: stop, desc: desc}, nil
-func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error)
+func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error) {
+	iter, err := kv.Seek(start)
+	if err != nil {
+		return nil, err
+	}
+	if desc && (!iter.Valid() || bytes.Compare(iter.Key(), start) > 0) {
+		if err = iter.Prev(); err != nil {
+			return nil, err
+		}
+	}
+	return &RangedKVIter{iter: *iter, stop: stop, desc: desc}, nil
+}
 
 // UzBVUkNF https://systems-programming.org/

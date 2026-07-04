@@ -30,7 +30,17 @@ func (schema *Schema) NewRow() Row {
 //  3. 遍历 schema.PKey：check(cell.Type == schema.Cols[idx].Type)；
 //     key = append(key, byte(cell.Type))（先写类型字节）；key = cell.EncodeKey(key)（再写保序编码的值）
 //  4. return append(key, 0x00)（结尾补 0x00，和 EncodeKeyPrefix 的 0xff 后缀区分开）
-func (row Row) EncodeKey(schema *Schema) []byte
+func (row Row) EncodeKey(schema *Schema) []byte {
+	check(len(row) == len(schema.Cols))
+	key := append([]byte(schema.Table), 0x00)
+	for _, idx := range schema.PKey {
+		cell := row[idx]
+		check(cell.Type == schema.Cols[idx].Type)
+		key = append(key, byte(cell.Type))
+		key = cell.EncodeKey(key)
+	}
+	return append(key, 0x00)
+}
 
 // 你来实现（只编码主键的前 N 列（prefix 可能比完整主键短），用于构造范围查询的起止边界；
 // positive 决定后缀是 0xff 还是不加——0xff 排在任何值后面，用来把"前缀匹配"变成"闭区间上界"或"开区间下界"）：
@@ -39,7 +49,18 @@ func (row Row) EncodeKey(schema *Schema) []byte
 //     key = append(key, byte(cell.Type))；key = cell.EncodeKey(key)
 //  3. positive 为 true：key = append(key, 0xff)（补最大字节，让这个前缀排在所有"前缀+任何后续字节"之后）
 //  4. return key
-func EncodeKeyPrefix(schema *Schema, prefix []Cell, positive bool) []byte
+func EncodeKeyPrefix(schema *Schema, prefix []Cell, positive bool) []byte {
+	key := append([]byte(schema.Table), 0x00)
+	for i, cell := range prefix {
+		check(cell.Type == schema.Cols[schema.PKey[i]].Type)
+		key = append(key, byte(cell.Type))
+		key = cell.EncodeKey(key)
+	}
+	if positive {
+		key = append(key, 0xff)
+	}
+	return key
+}
 
 func (row Row) EncodeVal(schema *Schema) (val []byte) {
 	check(len(row) == len(schema.Cols))
