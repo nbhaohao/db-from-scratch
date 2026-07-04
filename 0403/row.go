@@ -28,7 +28,16 @@ func (schema *Schema) NewRow() Row {
 //  3. 遍历 schema.PKey（主键列下标列表）：check(row[idx].Type == schema.Cols[idx].Type)，
 //     然后 key = row[idx].EncodeKey(key)（用 Cell 保序编码，不是 EncodeVal）
 //  4. return key
-func (row Row) EncodeKey(schema *Schema) (key []byte)
+func (row Row) EncodeKey(schema *Schema) (key []byte) {
+	key = append(key, []byte(schema.Table)...)
+	key = append(key, 0x00)
+	check(len(row) == len(schema.Cols))
+	for _, idx := range schema.PKey {
+		check(row[idx].Type == schema.Cols[idx].Type)
+		key = row[idx].EncodeKey(key)
+	}
+	return key
+}
 
 func (row Row) EncodeVal(schema *Schema) (val []byte) {
 	check(len(row) == len(schema.Cols))
@@ -47,7 +56,29 @@ func (row Row) EncodeVal(schema *Schema) (val []byte) {
 //  3. key = key[len(schema.Table)+1:] 去掉前缀
 //  4. 遍历 schema.PKey：row[idx] = Cell{Type: schema.Cols[idx].Type}，key, err = row[idx].DecodeKey(key)，出错直接 return
 //  5. 解完 key 应该正好用完，len(key) != 0 报 "trailing garbage"，否则 return nil
-func (row Row) DecodeKey(schema *Schema, key []byte) (err error)
+func (row Row) DecodeKey(schema *Schema, key []byte) (err error) {
+	check(len(row) == len(schema.Cols))
+
+	if len(key) < len(schema.Table)+1 {
+		return errors.New("bad key")
+	}
+	if string(key[:len(schema.Table)+1]) != schema.Table+"\x00" {
+		return errors.New("bad key")
+	}
+	key = key[len(schema.Table)+1:]
+
+	for _, idx := range schema.PKey {
+		row[idx] = Cell{Type: schema.Cols[idx].Type}
+		if key, err = row[idx].DecodeKey(key); err != nil {
+			return err
+		}
+	}
+
+	if len(key) != 0 {
+		return errors.New("trailing garbage")
+	}
+	return nil
+}
 
 func (row Row) DecodeVal(schema *Schema, val []byte) (err error) {
 	check(len(row) == len(schema.Cols))
