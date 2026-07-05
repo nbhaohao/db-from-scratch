@@ -90,6 +90,16 @@ func (tx *KVTX) Commit() error { return tx.target.applyTX(tx) }
 
 var ErrTXConflict = errors.New("TX is conflict with another TX")
 
+// 你来实现（多线程版提交,用两把锁分离「串行的慢 IO」和「短暂的数据改动」:commit 锁串行化整个
+// 提交(含写 log/fsync 这些慢操作),mu 锁只护 KV 内存结构(改 mem/history,很快)。好处:read-only
+// 事务进出只碰 mu、不会被别人的慢 commit 卡住。逻辑 = 0805 的 applyTX + 冲突检测 + 加锁）:
+//  1. kv.commit.Lock() + defer Unlock()（串行化整个提交,含下面的 log IO)
+//  2. defer kv.untrackTXSync(tx)（退出时从 ongoing 摘除、清历史;它内部自己加 mu 锁)
+//  3. tx.updates.Size()==0 → return nil（只读事务无需提交)
+//  4. kv.checkTXConflict(tx) → return ErrTXConflict（OCC 撞车就放弃)
+//  5. kv.updateLog(tx) 写 log(慢 IO,在 commit 锁内、mu 锁外);失败 return err
+//  6. kv.mu.Lock() + defer Unlock();kv.updateMem(tx) + kv.updateHistory(tx)（只在这段短临界区碰内存结构)
+//  7. return nil
 func (kv *KV) applyTX(tx *KVTX) error
 
 func (kv *KV) checkTXConflict(tx *KVTX) bool {

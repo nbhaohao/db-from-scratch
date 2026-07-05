@@ -63,6 +63,11 @@ func (tx *KVTX) Abort() { tx.target.abortTX(tx) }
 
 func (kv *KV) abortTX(tx *KVTX) { kv.untrackTX(tx) }
 
+// 你来实现（事务退出时从 ongoing 摘除自己,并清理不再需要的历史——防止 history 无限增长。
+// 冲突检测只需要「最早的仍在运行的事务」之后的历史,更早的没人会再拿来比对,可以丢）:
+//  1. slices.Index 找到 tx 在 kv.ongoing 里的下标,slices.Delete 移除
+//  2. 若还有别的 ongoing 事务:取最早那个的 snapshot(kv.ongoing[0].snapshot),把 history 头部 snapshot 小于它的都丢掉
+//  3. 若没有 ongoing 事务了:history 直接清空(kv.history[:0])
 func (kv *KV) untrackTX(tx *KVTX)
 
 func (tx *KVTX) Commit() error { return tx.target.applyTX(tx) }
@@ -85,6 +90,12 @@ func (kv *KV) applyTX(tx *KVTX) error {
 	return nil
 }
 
+// 你来实现（OCC 乐观并发控制的冲突检测:提交前检查本事务要写的 key,有没有被「本事务开始之后
+// 才提交的其它事务」改过。有 → 冲突,放弃本事务(返回 true,上层报 ErrTXConflict,应用可重试)。
+// 这就是防止 read-modify-update 的因果被并发破坏,例如两个事务同时给计数器 +1 只加了一次）:
+//  1. 遍历 tx.updates(本事务要写的每个 key)
+//  2. 对每个 key 扫 kv.history:若某条 other.snapshot > tx.snapshot(在本事务开始后提交)且 bytes.Equal(other.key, key) → return true(冲突)
+//  3. 都没撞上 → return false
 func (kv *KV) checkTXConflict(tx *KVTX) bool
 
 func (kv *KV) updateLog(tx *KVTX) error {
@@ -114,6 +125,10 @@ func (kv *KV) updateMem(tx *KVTX) {
 	kv.mem = merged
 }
 
+// 你来实现（提交成功后:把全局时间戳 snapshot +1(广义时间戳,用来判断事务先后),并把本事务改过的
+// key 记进 history,供后来的事务做冲突检测。优化:只有当前存在并发事务时才需要记历史）:
+//  1. kv.snapshot++（提交即推进全局时间戳)
+//  2. 若 len(kv.ongoing) > 1(有并发事务在跑、才可能产生冲突):遍历 tx.updates,每个 key append 一条 UpdatedKey{kv.snapshot, iter.Key()} 到 kv.history
 func (kv *KV) updateHistory(tx *KVTX)
 
 func (tx *KVTX) NewTX() *KVTX {

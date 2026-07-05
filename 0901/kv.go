@@ -35,6 +35,14 @@ type KVTX struct {
 	levels  MergedSortedKV
 }
 
+// 你来实现（快照隔离:让事务只看到「开始那一刻」的数据版本。关键一招——进入事务时把 kv.mem
+// 复制一份(值拷贝),事务查询走这份副本;之后别的事务改了真正的 kv.mem 也不影响本事务。
+// SSTable 天生只增不改、本身就是快照,不用管;只有会被原地改的 MemTable 要特殊处理）:
+//  1. tx := &KVTX{target: kv}
+//  2. mem := kv.mem（值拷贝!这一份就是本事务的 MemTable 快照)
+//  3. tx.levels = MergedSortedKV{&tx.updates, &mem}（事务缓冲 + mem 快照)
+//  4. for i := range kv.main 依次 append(&kv.main[i])（SSTable 各层,只增不改、天然是快照)
+//  5. return tx
 func (kv *KV) NewTX() *KVTX
 
 func (tx *KVTX) Abort() {}
@@ -66,6 +74,13 @@ func (kv *KV) updateLog(tx *KVTX) error {
 	return kv.log.Commit()
 }
 
+// 你来实现（提交时更新 kv.mem。快照隔离的另一半:不能原地改 kv.mem(否则会破坏别的事务正在读的
+// 快照),而是把「事务改动 + 旧 mem」归并成一个全新的 SortedArray,再整体替换 kv.mem。旧 mem 还被
+// 别的事务的快照引用着、不受影响——这就是 copy-on-write 式替换）:
+//  1. merged := SortedArray{}
+//  2. 用 MergedSortedKV{&tx.updates, &kv.mem}.Iter() 归并遍历(事务改动优先)
+//  3. 每条 merged.Push(iter.Key(), iter.Val(), iter.Deleted())
+//  4. kv.mem = merged（整体替换,旧 mem 留给还在读它的快照)
 func (kv *KV) updateMem(tx *KVTX)
 
 func (tx *KVTX) NewTX() *KVTX {

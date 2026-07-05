@@ -223,8 +223,22 @@ func (kv *KV) Open() (err error) {
 	return nil
 }
 
+// 你来实现（起一个后台线程自动跑 Compact,用 channel 唤醒(而不是空转 for 循环烧 CPU)。要能干净退出:
+// 用 closing channel + select 让线程被 Close 叫醒退出;用 WaitGroup 让 Close 能等它真正退出）:
+//  1. kv.updated = make(chan struct{}, kv.Options.LogShreshold)（带缓冲,容量=log 上限,满了发送端阻塞顺便给写入限速)
+//  2. kv.threads.Add(1);go func(){ defer kv.threads.Add(-1); for { ... } }()
+//  3. 循环里 select 同时等两个 channel:case _, ok = <-kv.updated(有更新,ok=true);case <-kv.closing(要关库了)
+//  4. ok==false(updated 被关、或走了 closing 分支)→ break 退出循环
+//  5. 否则 kv.Compact()(出错 log.Println 记一下、不致命)
 func (kv *KV) startCompactThread()
 
+// 你来实现（干净关库:先叫所有后台/事务线程退出、等它们真的退出了,再关文件。用 closing channel
+// 广播「要关了」(close 一个 channel = 所有在 select 里等 <-closing 的地方立刻就绪),用 WaitGroup 等干净。
+// 为什么不 close(updated)?因为 applyTX 可能还在往 updated 发信号,往已关 channel 发会 panic;改用单独的
+// closing 广播、发送端用 select 同时监听 closing 就能安全避让）:
+//  1. close(kv.closing)（广播退出:compact 线程 select 走 closing 分支退出;applyTX 发信号也改走 closing 不再往 updated 发)
+//  2. kv.threads.Wait()（阻塞到所有登记线程都 Add(-1) 完、计数归零)
+//  3. return kv.MultiClosers.Close()（此刻没人再用文件,安全关闭)
 func (kv *KV) Close() error
 
 func (kv *KV) openAll() error {
