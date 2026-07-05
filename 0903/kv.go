@@ -100,7 +100,27 @@ var ErrTXConflict = errors.New("TX is conflict with another TX")
 //  5. kv.updateLog(tx) 写 log(慢 IO,在 commit 锁内、mu 锁外);失败 return err
 //  6. kv.mu.Lock() + defer Unlock();kv.updateMem(tx) + kv.updateHistory(tx)（只在这段短临界区碰内存结构)
 //  7. return nil
-func (kv *KV) applyTX(tx *KVTX) error
+func (kv *KV) applyTX(tx *KVTX) error {
+	kv.commit.Lock()
+	defer kv.commit.Unlock()
+	defer kv.untrackTXSync(tx)
+
+	if tx.updates.Size() == 0 {
+		return nil
+	}
+	if kv.checkTXConflict(tx) {
+		return ErrTXConflict
+	}
+	if err := kv.updateLog(tx); err != nil {
+		return err
+	}
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	kv.updateMem(tx)
+	kv.updateHistory(tx)
+	return nil
+}
 
 func (kv *KV) checkTXConflict(tx *KVTX) bool {
 	iter, err := tx.updates.Iter()

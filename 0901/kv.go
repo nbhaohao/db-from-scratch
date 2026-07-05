@@ -43,7 +43,15 @@ type KVTX struct {
 //  3. tx.levels = MergedSortedKV{&tx.updates, &mem}（事务缓冲 + mem 快照)
 //  4. for i := range kv.main 依次 append(&kv.main[i])（SSTable 各层,只增不改、天然是快照)
 //  5. return tx
-func (kv *KV) NewTX() *KVTX
+func (kv *KV) NewTX() *KVTX {
+	tx := &KVTX{target: kv}
+	mem := kv.mem
+	tx.levels = MergedSortedKV{&tx.updates, &mem}
+	for i := range kv.main {
+		tx.levels = append(tx.levels, &kv.main[i])
+	}
+	return tx
+}
 
 func (tx *KVTX) Abort() {}
 
@@ -81,7 +89,16 @@ func (kv *KV) updateLog(tx *KVTX) error {
 //  2. 用 MergedSortedKV{&tx.updates, &kv.mem}.Iter() 归并遍历(事务改动优先)
 //  3. 每条 merged.Push(iter.Key(), iter.Val(), iter.Deleted())
 //  4. kv.mem = merged（整体替换,旧 mem 留给还在读它的快照)
-func (kv *KV) updateMem(tx *KVTX)
+func (kv *KV) updateMem(tx *KVTX) {
+	merged := SortedArray{}
+	iter, err := MergedSortedKV{&tx.updates, &kv.mem}.Iter()
+	check(err == nil)
+	for ; err == nil && iter.Valid(); err = iter.Next() {
+		check(err == nil)
+		merged.Push(iter.Key(), iter.Val(), iter.Deleted())
+	}
+	kv.mem = merged
+}
 
 func (tx *KVTX) NewTX() *KVTX {
 	inner := &KVTX{target: tx}

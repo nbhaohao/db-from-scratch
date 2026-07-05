@@ -68,7 +68,19 @@ func (kv *KV) abortTX(tx *KVTX) { kv.untrackTX(tx) }
 //  1. slices.Index 找到 tx 在 kv.ongoing 里的下标,slices.Delete 移除
 //  2. 若还有别的 ongoing 事务:取最早那个的 snapshot(kv.ongoing[0].snapshot),把 history 头部 snapshot 小于它的都丢掉
 //  3. 若没有 ongoing 事务了:history 直接清空(kv.history[:0])
-func (kv *KV) untrackTX(tx *KVTX)
+func (kv *KV) untrackTX(tx *KVTX) {
+	idx := slices.Index(kv.ongoing, tx)
+	check(idx >= 0)
+	kv.ongoing = slices.Delete(kv.ongoing, idx, idx+1)
+	if len(kv.ongoing) > 0 {
+		minSnapshot := kv.ongoing[0].snapshot
+		for len(kv.history) > 0 && kv.history[0].snapshot < minSnapshot {
+			kv.history = kv.history[1:]
+		}
+	} else {
+		kv.history = kv.history[:0]
+	}
+}
 
 func (tx *KVTX) Commit() error { return tx.target.applyTX(tx) }
 
@@ -96,7 +108,20 @@ func (kv *KV) applyTX(tx *KVTX) error {
 //  1. 遍历 tx.updates(本事务要写的每个 key)
 //  2. 对每个 key 扫 kv.history:若某条 other.snapshot > tx.snapshot(在本事务开始后提交)且 bytes.Equal(other.key, key) → return true(冲突)
 //  3. 都没撞上 → return false
-func (kv *KV) checkTXConflict(tx *KVTX) bool
+func (kv *KV) checkTXConflict(tx *KVTX) bool {
+	iter, err := tx.updates.Iter()
+	check(err == nil)
+	for ; err == nil && iter.Valid(); err = iter.Next() {
+		check(err == nil)
+		key := iter.Key()
+		for _, other := range kv.history {
+			if other.snapshot > tx.snapshot && bytes.Equal(other.key, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func (kv *KV) updateLog(tx *KVTX) error {
 	defer kv.log.ResetTX()
@@ -129,7 +154,17 @@ func (kv *KV) updateMem(tx *KVTX) {
 // key 记进 history,供后来的事务做冲突检测。优化:只有当前存在并发事务时才需要记历史）:
 //  1. kv.snapshot++（提交即推进全局时间戳)
 //  2. 若 len(kv.ongoing) > 1(有并发事务在跑、才可能产生冲突):遍历 tx.updates,每个 key append 一条 UpdatedKey{kv.snapshot, iter.Key()} 到 kv.history
-func (kv *KV) updateHistory(tx *KVTX)
+func (kv *KV) updateHistory(tx *KVTX) {
+	kv.snapshot++
+	if len(kv.ongoing) > 1 {
+		iter, err := tx.updates.Iter()
+		check(err == nil)
+		for ; err == nil && iter.Valid(); err = iter.Next() {
+			check(err == nil)
+			kv.history = append(kv.history, UpdatedKey{kv.snapshot, iter.Key()})
+		}
+	}
+}
 
 func (tx *KVTX) NewTX() *KVTX {
 	inner := &KVTX{target: tx}
