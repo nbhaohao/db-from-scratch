@@ -61,12 +61,34 @@ func (kv *KV) applyTX(tx *KVTX) error {
 //  1. tx.updates.Iter() 遍历事务里的每条 KV
 //  2. 每条 kv.log.Write(&Entry{iter.Key(), iter.Val(), iter.Deleted()});写失败 return err
 //  3. 遍历自身出错用 check 断言(内存迭代器不该出错),return nil
-func (kv *KV) updateLog(tx *KVTX) error
+func (kv *KV) updateLog(tx *KVTX) error {
+	iter, err := tx.updates.Iter()
+	check(err == nil)
+	for ; iter.Valid(); err = iter.Next() {
+		check(err == nil)
+		if err := kv.log.Write(&Entry{key: iter.Key(), val: iter.Val(), deleted: iter.Deleted()}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // 你来实现（Commit 第二步:把事务缓冲 tx.updates 应用到真正的 kv.mem(和上一步 log 落盘对应)）:
 //  1. tx.updates.Iter() 遍历每条改动
 //  2. iter.Deleted() → kv.mem.Del(key);否则 kv.mem.Set(key, val);内存操作出错用 check
-func (kv *KV) updateMem(tx *KVTX)
+func (kv *KV) updateMem(tx *KVTX) {
+	iter, err := tx.updates.Iter()
+	check(err == nil)
+	for ; iter.Valid(); err = iter.Next() {
+		check(err == nil)
+		if iter.Deleted() {
+			_, err = kv.mem.Del(iter.Key())
+		} else {
+			_, err = kv.mem.Set(iter.Key(), iter.Val())
+		}
+		check(err == nil)
+	}
+}
 
 func (kv *KV) Open() (err error) {
 	if kv.Options.LogShreshold <= 0 {
@@ -184,7 +206,25 @@ const (
 //  2. 按 mode(Upsert/Insert/Update)算 updated(逻辑同旧 KV.SetEx)
 //  3. updated 时:tx.updates.Set(key, val)(只进事务缓冲,不写 log)
 //  4. return updated,nil
-func (tx *KVTX) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error)
+func (tx *KVTX) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error) {
+	oldVal, exist, err := tx.Get(key)
+	if err != nil {
+		return false, err
+	}
+	switch mode {
+	case ModeUpsert:
+		updated = !exist || !bytes.Equal(oldVal, val)
+	case ModeInsert:
+		updated = !exist
+	case ModeUpdate:
+		updated = exist && !bytes.Equal(oldVal, val)
+	}
+	if updated {
+		_, err = tx.updates.Set(key, val)
+		check(err == nil)
+	}
+	return updated, nil
+}
 
 func (kv *KV) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error) {
 	tx := kv.NewTX()
@@ -218,7 +258,15 @@ func (kv *KV) Set(key []byte, val []byte) (updated bool, err error) {
 //  1. tx.Get(key):不存在或出错 → return false,err
 //  2. tx.updates.Del(key)(在事务缓冲里留墓碑)
 //  3. return true,nil
-func (tx *KVTX) Del(key []byte) (deleted bool, err error)
+func (tx *KVTX) Del(key []byte) (deleted bool, err error) {
+	_, exist, err := tx.Get(key)
+	if err != nil || !exist {
+		return false, err
+	}
+	_, err = tx.updates.Del(key)
+	check(err == nil)
+	return true, nil
+}
 
 func (kv *KV) Del(key []byte) (deleted bool, err error) {
 	tx := kv.NewTX()
@@ -230,7 +278,13 @@ func (kv *KV) Del(key []byte) (deleted bool, err error) {
 // [tx.updates(事务改动,最新) + kv.mem + 各层 SSTable],这里照常归并 + 过滤墓碑即可）:
 //  1. tx.levels.Seek(key) 拿多层归并迭代器;透传 error
 //  2. filterDeleted(iter) 跳墓碑后 return
-func (tx *KVTX) Seek(key []byte) (SortedKVIter, error)
+func (tx *KVTX) Seek(key []byte) (SortedKVIter, error) {
+	iter, err := tx.levels.Seek(key)
+	if err != nil {
+		return nil, err
+	}
+	return filterDeleted(iter)
+}
 
 func filterDeleted(iter SortedKVIter) (SortedKVIter, error) {
 	for iter.Valid() && iter.Deleted() {

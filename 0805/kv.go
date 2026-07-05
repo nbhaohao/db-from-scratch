@@ -62,7 +62,22 @@ func (kv *KV) applyTX(tx *KVTX) error {
 //  1. defer kv.log.ResetTX()（失败即回滚 offset 到 committed 处）
 //  2. tx.updates.Iter() 遍历:op = iter.Deleted()?EntryDel:EntryAdd;kv.log.Write(&Entry{key:..., val:..., op:op});写失败 return err
 //  3. 遍历自身出错用 check;最后 return kv.log.Commit()(写 EntryCommit + fsync + 推进 committed)
-func (kv *KV) updateLog(tx *KVTX) error
+func (kv *KV) updateLog(tx *KVTX) error {
+	defer kv.log.ResetTX()
+	iter, err := tx.updates.Iter()
+	check(err == nil)
+	for ; iter.Valid(); err = iter.Next() {
+		check(err == nil)
+		op := EntryAdd
+		if iter.Deleted() {
+			op = EntryDel
+		}
+		if err := kv.log.Write(&Entry{key: iter.Key(), val: iter.Val(), op: op}); err != nil {
+			return err
+		}
+	}
+	return kv.log.Commit()
+}
 
 func (kv *KV) updateMem(tx *KVTX) {
 	iter, err := tx.updates.Iter()
@@ -89,7 +104,20 @@ func (tx *KVTX) NewTX() *KVTX {
 //  1. inner.updates.Iter() 遍历内层的每条改动
 //  2. iter.Deleted() → tx.updates.Del(key);否则 tx.updates.Set(key, val)(并进外层缓冲)
 //  3. 内存操作 check;return nil
-func (tx *KVTX) applyTX(inner *KVTX) error
+func (tx *KVTX) applyTX(inner *KVTX) error {
+	iter, err := inner.updates.Iter()
+	check(err == nil)
+	for ; iter.Valid(); err = iter.Next() {
+		check(err == nil)
+		if iter.Deleted() {
+			_, err = tx.updates.Del(iter.Key())
+		} else {
+			_, err = tx.updates.Set(iter.Key(), iter.Val())
+		}
+		check(err == nil)
+	}
+	return nil
+}
 
 func (kv *KV) Open() (err error) {
 	if kv.Options.LogShreshold <= 0 {

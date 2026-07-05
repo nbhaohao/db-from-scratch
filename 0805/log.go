@@ -1,6 +1,7 @@
 package db0805
 
 import (
+	"errors"
 	"io"
 	"os"
 )
@@ -57,7 +58,20 @@ func (log *Log) ResetTX() {
 //  2. 其它 err → return false,err 透传
 //  3. 正常读到:若 ent.op==EntryCommit,把 log.writer.offset 和 log.writer.committed 都推进到 log.reader.offset(标记「已提交到这里」)
 //  4. return false,nil
-func (log *Log) Read(ent *Entry) (eof bool, err error)
+func (log *Log) Read(ent *Entry) (eof bool, err error) {
+	err = ent.Decode(&log.reader)
+	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || err == ErrBadSum {
+			return true, nil
+		}
+		return false, err
+	}
+	if ent.op == EntryCommit {
+		log.writer.offset = log.reader.offset
+		log.writer.committed = log.reader.offset
+	}
+	return false, nil
+}
 
 func (log *Log) Truncate() error {
 	log.writer.offset = 0

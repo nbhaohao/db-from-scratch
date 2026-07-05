@@ -117,7 +117,29 @@ type RowIterator struct {
 //  3. indexNo>0(二级索引):用解出的主键 iter.db.Select(schema, row) 回表取整行;ok=false → errors.New(inconsistent index)
 //  4. indexNo==0(主键索引):key 已含主键,直接 iter.row.DecodeVal(schema, 当前 val) 把 val 里其余列解出来
 //  5. return true,nil
-func (iter *RowIterator) decodeKVIter() (bool, error)
+func (iter *RowIterator) decodeKVIter() (bool, error) {
+	if !iter.iter.Valid() {
+		return false, nil
+	}
+	if err := iter.row.DecodeKey(iter.schema, iter.indexNo, iter.iter.Key()); err != nil {
+		check(err != ErrOutOfRange)
+		return false, err
+	}
+	if iter.indexNo > 0 {
+		ok, err := iter.db.Select(iter.schema, iter.row)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, errors.New("inconsistent index")
+		}
+	} else {
+		if err := iter.row.DecodeVal(iter.schema, iter.iter.Val()); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
 
 func (iter *RowIterator) Valid() bool {
 	return iter.valid
