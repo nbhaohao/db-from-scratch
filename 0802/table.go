@@ -38,7 +38,52 @@ func (db *DB) Select(schema *Schema, row Row) (ok bool, err error) {
 //  3. 若 exist:把 oldVal 解成 oldRow,调 db.Delete(schema, oldRow) 删掉它的全部索引 key(否则旧二级索引还指向已改的行)
 //  4. 遍历 schema.Indices:i==0 写主键(key,val);i>0 写二级索引(key=EncodeKey(schema,i), val=nil);都用 db.KV.SetEx(...,ModeInsert)
 //  5. return updated,err
-func (db *DB) update(schema *Schema, row Row, mode UpdateMode) (updated bool, err error)
+func (db *DB) update(schema *Schema, row Row, mode UpdateMode) (updated bool, err error) {
+	key := row.EncodeKey(schema, 0)
+	val := row.EncodeVal(schema)
+	oldVal, exist, err := db.KV.Get(key)
+	if err != nil {
+		return false, err
+	}
+
+	switch mode {
+	case ModeUpsert:
+		updated = !exist || !slices.Equal(oldVal, val)
+	case ModeInsert:
+		updated = !exist
+	case ModeUpdate:
+		updated = exist && !slices.Equal(oldVal, val)
+	}
+	if !updated {
+		return false, nil
+	}
+
+	if exist {
+		oldRow := schema.NewRow()
+		for _, idx := range schema.Indices[0] {
+			oldRow[idx] = row[idx]
+		}
+		if err := oldRow.DecodeVal(schema, oldVal); err != nil {
+			return false, err
+		}
+		if _, err := db.Delete(schema, oldRow); err != nil {
+			return false, err
+		}
+	}
+
+	for i := range schema.Indices {
+		indexKey := row.EncodeKey(schema, i)
+		var indexVal []byte
+		if i == 0 {
+			indexVal = val
+		}
+		if _, err := db.KV.SetEx(indexKey, indexVal, ModeInsert); err != nil {
+			return false, err
+		}
+	}
+
+	return true, nil
+}
 
 func (db *DB) Insert(schema *Schema, row Row) (updated bool, err error) {
 	return db.update(schema, row, ModeInsert)
@@ -56,7 +101,24 @@ func (db *DB) Update(schema *Schema, row Row) (updated bool, err error) {
 //  1. 遍历 schema.Indices 每个 i:key=row.EncodeKey(schema,i),db.KV.Del(key)
 //  2. 若某次 deleted=false:i!=0(二级索引本该存在却没有)→ return errors.New(inconsistent index);i==0(主键就不存在)→ break
 //  3. return deleted,err
-func (db *DB) Delete(schema *Schema, row Row) (deleted bool, err error)
+func (db *DB) Delete(schema *Schema, row Row) (deleted bool, err error) {
+	for i := range schema.Indices {
+		key := row.EncodeKey(schema, i)
+		d, err := db.KV.Del(key)
+		if err != nil {
+			return false, err
+		}
+		if i == 0 {
+			deleted = d
+			if !d {
+				break
+			}
+		} else if !d {
+			return false, errors.New("inconsistent index")
+		}
+	}
+	return deleted, nil
+}
 
 type RowIterator struct {
 	schema *Schema
