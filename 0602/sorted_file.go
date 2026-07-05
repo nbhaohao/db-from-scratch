@@ -1,7 +1,9 @@
 package db0602
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 )
 
@@ -132,7 +134,30 @@ func (file *SortedFile) Iter() (SortedKVIter, error) {
 //  4. 在 offset 处读 4+4 字节，拆出 klen、vlen(LittleEndian.Uint32(buf[0:4]) / buf[4:8])
 //  5. data := make([]byte, klen+vlen)；在 offset+8 处 ReadAt(data) 一次读完 key+val
 //  6. return data[:klen], data[klen:], nil(前段 key、后段 val)
-func (file *SortedFile) index(pos int) (key []byte, val []byte, err error)
+func (file *SortedFile) index(pos int) (key []byte, val []byte, err error) {
+	check(0 <= pos && pos < file.nkeys)
+
+	var buf [8]byte
+	if _, err = file.fp.ReadAt(buf[:8], int64(8+8*pos)); err != nil {
+		return nil, nil, err
+	}
+	offset := int64(binary.LittleEndian.Uint64(buf[:8]))
+	if offset < int64(8+8*file.nkeys) {
+		return nil, nil, errors.New("corrupted file")
+	}
+
+	if _, err = file.fp.ReadAt(buf[:8], offset); err != nil {
+		return nil, nil, err
+	}
+	klen := int(binary.LittleEndian.Uint32(buf[0:4]))
+	vlen := int(binary.LittleEndian.Uint32(buf[4:8]))
+
+	data := make([]byte, klen+vlen)
+	if _, err = file.fp.ReadAt(data, offset+8); err != nil {
+		return nil, nil, err
+	}
+	return data[:klen], data[klen:], nil
+}
 
 // 你来实现（二分查找第一个 >= key 的位置，返回定位好的迭代器。注意:index() 会返回 IO error，
 // 所以不能用 slices.BinarySearch 这类不透传 error 的封装，要手写二分）:
@@ -143,6 +168,27 @@ func (file *SortedFile) index(pos int) (key []byte, val []byte, err error)
 //  2. iter := &SortedFileIter{file: file, pos: pos}
 //  3. iter.loadCurrent() 把该位置的 KV 读进 iter(出错 return nil, err)
 //  4. return iter, nil
-func (file *SortedFile) Seek(key []byte) (SortedKVIter, error)
+func (file *SortedFile) Seek(key []byte) (SortedKVIter, error) {
+	lo, hi := 0, file.nkeys
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		k, _, err := file.index(mid)
+		if err != nil {
+			return nil, err
+		}
+		cmp := bytes.Compare(key, k)
+		if cmp > 0 {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+
+	iter := &SortedFileIter{file: file, pos: lo}
+	if err := iter.loadCurrent(); err != nil {
+		return nil, err
+	}
+	return iter, nil
+}
 
 // UzBVUkNF https://systems-programming.org/
