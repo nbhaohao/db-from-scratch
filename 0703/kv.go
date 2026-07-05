@@ -3,6 +3,7 @@ package db0703
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -171,7 +172,17 @@ func (kv *KV) Del(key []byte) (deleted bool, err error) {
 //  2. for i := range kv.main 依次 append(&kv.main[i])（下标越小越新，紧跟在 mem 之后）
 //  3. 对这个多层集合调 .Seek(key) 拿归并迭代器；透传 error
 //  4. 用已就位的 filterDeleted(iter) 跳过墓碑后 return
-func (kv *KV) Seek(key []byte) (SortedKVIter, error)
+func (kv *KV) Seek(key []byte) (SortedKVIter, error) {
+	levels := MergedSortedKV{&kv.mem}
+	for i := range kv.main {
+		levels = append(levels, &kv.main[i])
+	}
+	iter, err := levels.Seek(key)
+	if err != nil {
+		return nil, err
+	}
+	return filterDeleted(iter)
+}
 
 func filterDeleted(iter SortedKVIter) (SortedKVIter, error) {
 	for iter.Valid() && iter.Deleted() {
@@ -262,6 +273,29 @@ func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error) {
 //  3. meta.Get()，meta.Version=version，用 slices.Insert 把新文件名插到 meta.SSTables 第 0 位；meta.Set，失败关文件 return
 //  4. 用 slices.Insert 把新 file 插到 kv.main 第 0 位（成为最上层 SSTable）
 //  5. kv.mem.Clear()，return kv.log.Truncate()
-func (kv *KV) Compact() error
+func (kv *KV) Compact() error {
+	kv.version++
+	filename := fmt.Sprintf("sstable_%d", kv.version)
+	filepath := path.Join(kv.Options.Dirpath, filename)
+
+	newFile := SortedFile{FileName: filepath}
+	if err := newFile.CreateFromSorted(&kv.mem); err != nil {
+		os.Remove(filepath)
+		return err
+	}
+
+	meta := kv.meta.Get()
+	meta.Version = kv.version
+	meta.SSTables = slices.Insert(meta.SSTables, 0, filename)
+	if err := kv.meta.Set(meta); err != nil {
+		newFile.Close()
+		return err
+	}
+
+	kv.main = slices.Insert(kv.main, 0, newFile)
+
+	kv.mem.Clear()
+	return kv.log.Truncate()
+}
 
 // UzBVUkNF https://systems-programming.org/

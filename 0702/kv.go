@@ -3,6 +3,7 @@ package db0702
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -261,6 +262,33 @@ func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error) {
 //  3. meta := kv.meta.Get()，改 meta.Version=kv.version、meta.SSTable=新文件名，kv.meta.Set(meta) 原子记录；失败关掉新文件 return（旧 SSTable 还在，安全）
 //  4. 记录成功后：关闭并 os.Remove 旧的 kv.main 文件，再 kv.main = 新文件
 //  5. kv.mem.Clear()，return kv.log.Truncate()（清空 log）
-func (kv *KV) Compact() error
+func (kv *KV) Compact() error {
+	kv.version++
+	filename := fmt.Sprintf("sstable_%d", kv.version)
+	filepath := path.Join(kv.Options.Dirpath, filename)
+
+	newFile := SortedFile{FileName: filepath}
+	if err := newFile.CreateFromSorted(MergedSortedKV{&kv.mem, &kv.main}); err != nil {
+		os.Remove(filepath)
+		return err
+	}
+
+	meta := kv.meta.Get()
+	meta.Version = kv.version
+	meta.SSTable = filename
+	if err := kv.meta.Set(meta); err != nil {
+		newFile.Close()
+		return err
+	}
+
+	if kv.main.FileName != "" {
+		kv.main.Close()
+		os.Remove(kv.main.FileName)
+	}
+	kv.main = newFile
+
+	kv.mem.Clear()
+	return kv.log.Truncate()
+}
 
 // UzBVUkNF https://systems-programming.org/

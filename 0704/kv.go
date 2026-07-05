@@ -291,7 +291,11 @@ func (kv *KV) Compact() error {
 // 相邻两层大小太接近(上层不够小)时就该合并。GrowthFactor 是层间目标大小比例，越大则合并越频繁、层数越少）:
 //  1. cur = 第 idx 层 EstimatedSize()，next = 第 idx+1 层 EstimatedSize()
 //  2. 判据：本层大小乘 GrowthFactor 若「不小于」两层之和(float32(cur)*GrowthFactor >= float32(cur+next))，说明比例没拉开、上层偏大，返回 true
-func (kv *KV) shouldMerge(idx int) bool
+func (kv *KV) shouldMerge(idx int) bool {
+	cur := kv.main[idx].EstimatedSize()
+	next := kv.main[idx+1].EstimatedSize()
+	return float32(cur)*kv.Options.GrowthFactor >= float32(cur+next)
+}
 
 func (kv *KV) compactLog() error {
 	kv.version++
@@ -329,7 +333,37 @@ func (kv *KV) compactLog() error {
 //  3. CreateFromSorted(m) 落新文件（失败 os.Remove + return）
 //  4. meta.Get()，Version=version，用 slices.Replace 把 SSTables 的 [level, level+2) 两项替换成新文件名；meta.Set，失败关文件 return
 //  5. 先记下旧两层文件名，用 slices.Replace 把 kv.main 的 [level, level+2) 换成新 file，再 os.Remove 两个旧文件
-func (kv *KV) compactSSTable(level int) error
+func (kv *KV) compactSSTable(level int) error {
+	kv.version++
+	sstable := fmt.Sprintf("sstable_%d", kv.version)
+	filename := path.Join(kv.Options.Dirpath, sstable)
+
+	var m SortedKV = MergedSortedKV{&kv.main[level], &kv.main[level+1]}
+	if len(kv.main) == level+2 {
+		m = NoDeletedSortedKV{m}
+	}
+
+	file := SortedFile{FileName: filename}
+	if err := file.CreateFromSorted(m); err != nil {
+		os.Remove(filename)
+		return err
+	}
+
+	meta := kv.meta.Get()
+	meta.Version = kv.version
+	meta.SSTables = slices.Replace(meta.SSTables, level, level+2, sstable)
+	if err := kv.meta.Set(meta); err != nil {
+		file.Close()
+		return err
+	}
+
+	old0, old1 := kv.main[level].FileName, kv.main[level+1].FileName
+	kv.main = slices.Replace(kv.main, level, level+2, file)
+	os.Remove(old0)
+	os.Remove(old1)
+	kv.MultiClosers = append(kv.MultiClosers, &file)
+	return nil
+}
 
 type NoDeletedSortedKV struct {
 	SortedKV
