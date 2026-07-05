@@ -287,6 +287,10 @@ func (kv *KV) Compact() error {
 	return nil
 }
 
+// 你来实现（判断第 idx 层要不要和 idx+1 层合并。LSM-Tree 靠「层大小指数递增」把层数压在 O(log N)：
+// 相邻两层大小太接近(上层不够小)时就该合并。GrowthFactor 是层间目标大小比例，越大则合并越频繁、层数越少）:
+//  1. cur = 第 idx 层 EstimatedSize()，next = 第 idx+1 层 EstimatedSize()
+//  2. 判据：本层大小乘 GrowthFactor 若「不小于」两层之和(float32(cur)*GrowthFactor >= float32(cur+next))，说明比例没拉开、上层偏大，返回 true
 func (kv *KV) shouldMerge(idx int) bool
 
 func (kv *KV) compactLog() error {
@@ -317,6 +321,14 @@ func (kv *KV) compactLog() error {
 	return kv.log.Truncate()
 }
 
+// 你来实现（合并相邻两层 SSTable 成一个，取代原来的两层。若合并后的结果成为最后一层，要用
+// NoDeletedSortedKV 包一下丢弃墓碑——最后一层之下再没有更旧的值需要盖住了，留墓碑纯浪费空间。
+// 流程和 compactLog 一样是「先写新文件、再原子换 metadata、最后删旧文件」）:
+//  1. kv.version++；拼 sstable_%d 全路径文件名
+//  2. m = MergedSortedKV{&kv.main[level], &kv.main[level+1]}；若 len(kv.main)==level+2（level+1 就是最后一层）→ m = NoDeletedSortedKV{m}
+//  3. CreateFromSorted(m) 落新文件（失败 os.Remove + return）
+//  4. meta.Get()，Version=version，用 slices.Replace 把 SSTables 的 [level, level+2) 两项替换成新文件名；meta.Set，失败关文件 return
+//  5. 先记下旧两层文件名，用 slices.Replace 把 kv.main 的 [level, level+2) 换成新 file，再 os.Remove 两个旧文件
 func (kv *KV) compactSSTable(level int) error
 
 type NoDeletedSortedKV struct {

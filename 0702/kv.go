@@ -253,6 +253,14 @@ func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error) {
 	return &RangedKVIter{iter: iter, stop: stop, desc: desc}, nil
 }
 
+// 你来实现（把 MemTable 合并进 SSTable，但这次不再用固定文件名 rename，而是用递增 version 生成
+// 新文件名、记进 metadata。为多层 SSTable 铺路：每个文件名都唯一，且 version 无论成败都递增——
+// 失败遗留的坏文件下次不会被覆盖，恢复后能安全清理）:
+//  1. kv.version++；fmt.Sprintf("sstable_%d", kv.version) 拼名，path.Join(Options.Dirpath, ...) 得全路径
+//  2. 建 SortedFile，MergedSortedKV{&kv.mem, &kv.main} 用 CreateFromSorted 落成新文件；失败要 os.Remove 掉半成品再 return
+//  3. meta := kv.meta.Get()，改 meta.Version=kv.version、meta.SSTable=新文件名，kv.meta.Set(meta) 原子记录；失败关掉新文件 return（旧 SSTable 还在，安全）
+//  4. 记录成功后：关闭并 os.Remove 旧的 kv.main 文件，再 kv.main = 新文件
+//  5. kv.mem.Clear()，return kv.log.Truncate()（清空 log）
 func (kv *KV) Compact() error
 
 // UzBVUkNF https://systems-programming.org/

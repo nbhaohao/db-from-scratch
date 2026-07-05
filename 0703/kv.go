@@ -165,6 +165,12 @@ func (kv *KV) Del(key []byte) (deleted bool, err error) {
 	return true, nil
 }
 
+// 你来实现（多层查询：main 从单个 SSTable 变成了 []SortedFile。查询要把 MemTable + 所有层
+// 一起做多路归并，上层(下标小)优先；删除的 key(墓碑)在归并后要过滤掉，别露出下层的旧值）:
+//  1. 建 MergedSortedKV，第一个放 &kv.mem（最上层，优先级最高）
+//  2. for i := range kv.main 依次 append(&kv.main[i])（下标越小越新，紧跟在 mem 之后）
+//  3. 对这个多层集合调 .Seek(key) 拿归并迭代器；透传 error
+//  4. 用已就位的 filterDeleted(iter) 跳过墓碑后 return
 func (kv *KV) Seek(key []byte) (SortedKVIter, error)
 
 func filterDeleted(iter SortedKVIter) (SortedKVIter, error) {
@@ -249,6 +255,13 @@ func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error) {
 	return &RangedKVIter{iter: iter, stop: stop, desc: desc}, nil
 }
 
+// 你来实现（把 log/MemTable 转成一个新的顶层 SSTable，插到 main[0]。这次只落 MemTable 本身，
+// 不再和下层合并——层与层的合并留到 0704。metadata 也从单个 SSTable 名换成了 SSTables 列表）:
+//  1. kv.version++；同前拼 sstable_%d 全路径文件名
+//  2. 只把 &kv.mem 用 CreateFromSorted 落成新文件（失败 os.Remove 半成品 + return）
+//  3. meta.Get()，meta.Version=version，用 slices.Insert 把新文件名插到 meta.SSTables 第 0 位；meta.Set，失败关文件 return
+//  4. 用 slices.Insert 把新 file 插到 kv.main 第 0 位（成为最上层 SSTable）
+//  5. kv.mem.Clear()，return kv.log.Truncate()
 func (kv *KV) Compact() error
 
 // UzBVUkNF https://systems-programming.org/
