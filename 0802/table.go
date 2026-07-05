@@ -30,6 +30,14 @@ func (db *DB) Select(schema *Schema, row Row) (ok bool, err error) {
 	return true, nil
 }
 
+// 你来实现（写一条记录 + 维护所有索引。索引「维护」的核心:一次逻辑更新会牵动多个 KV
+// (主键 1 个 + 每个二级索引 1 个)。要点:值变了,旧记录的索引 key 就失效,得先按旧行删掉全部索引、再写新的;
+// 此刻多个 key 还没有原子性——要等 0804 事务）:
+//  1. key=row.EncodeKey(schema,0)(主键)、val=row.EncodeVal(schema);db.KV.Get(key) 拿 oldVal/exist
+//  2. 按 mode(Upsert/Insert/Update)算 updated;不 updated 直接 return false,nil
+//  3. 若 exist:把 oldVal 解成 oldRow,调 db.Delete(schema, oldRow) 删掉它的全部索引 key(否则旧二级索引还指向已改的行)
+//  4. 遍历 schema.Indices:i==0 写主键(key,val);i>0 写二级索引(key=EncodeKey(schema,i), val=nil);都用 db.KV.SetEx(...,ModeInsert)
+//  5. return updated,err
 func (db *DB) update(schema *Schema, row Row, mode UpdateMode) (updated bool, err error)
 
 func (db *DB) Insert(schema *Schema, row Row) (updated bool, err error) {
@@ -44,6 +52,10 @@ func (db *DB) Update(schema *Schema, row Row) (updated bool, err error) {
 	return db.update(schema, row, ModeUpdate)
 }
 
+// 你来实现（删一条记录 = 删掉它在所有索引里的 key(主键 + 每个二级索引)。索引维护的删除半边）:
+//  1. 遍历 schema.Indices 每个 i:key=row.EncodeKey(schema,i),db.KV.Del(key)
+//  2. 若某次 deleted=false:i!=0(二级索引本该存在却没有)→ return errors.New(inconsistent index);i==0(主键就不存在)→ break
+//  3. return deleted,err
 func (db *DB) Delete(schema *Schema, row Row) (deleted bool, err error)
 
 type RowIterator struct {

@@ -56,8 +56,16 @@ func (kv *KV) applyTX(tx *KVTX) error {
 	return nil
 }
 
+// 你来实现（Commit 第一步:把事务缓冲 tx.updates 里每条改动写进 log。0804 先做最朴素的逐条写;
+// 多个 key 真正的原子提交(共用一条 commit 标记)留到 0805）:
+//  1. tx.updates.Iter() 遍历事务里的每条 KV
+//  2. 每条 kv.log.Write(&Entry{iter.Key(), iter.Val(), iter.Deleted()});写失败 return err
+//  3. 遍历自身出错用 check 断言(内存迭代器不该出错),return nil
 func (kv *KV) updateLog(tx *KVTX) error
 
+// 你来实现（Commit 第二步:把事务缓冲 tx.updates 应用到真正的 kv.mem(和上一步 log 落盘对应)）:
+//  1. tx.updates.Iter() 遍历每条改动
+//  2. iter.Deleted() → kv.mem.Del(key);否则 kv.mem.Set(key, val);内存操作出错用 check
 func (kv *KV) updateMem(tx *KVTX)
 
 func (kv *KV) Open() (err error) {
@@ -170,6 +178,12 @@ const (
 	ModeUpdate UpdateMode = 2 // update existing
 )
 
+// 你来实现（事务内的写:和原来 KV.SetEx 几乎一样,但改动只记进 tx.updates(事务私有的 MemTable),
+// 不再直接写 log、也不碰 kv.mem——真正落 log 要等 Commit 一并处理,这样多个 key 才能一起原子提交）:
+//  1. tx.Get(key) 拿 oldVal/exist(事务内查询,能看到本事务已做的改动)
+//  2. 按 mode(Upsert/Insert/Update)算 updated(逻辑同旧 KV.SetEx)
+//  3. updated 时:tx.updates.Set(key, val)(只进事务缓冲,不写 log)
+//  4. return updated,nil
 func (tx *KVTX) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error)
 
 func (kv *KV) SetEx(key []byte, val []byte, mode UpdateMode) (updated bool, err error) {
@@ -200,6 +214,10 @@ func (kv *KV) Set(key []byte, val []byte) (updated bool, err error) {
 	return kv.SetEx(key, val, ModeUpsert)
 }
 
+// 你来实现（事务内的删除:同样只写进 tx.updates 的墓碑,不碰 log/kv.mem）:
+//  1. tx.Get(key):不存在或出错 → return false,err
+//  2. tx.updates.Del(key)(在事务缓冲里留墓碑)
+//  3. return true,nil
 func (tx *KVTX) Del(key []byte) (deleted bool, err error)
 
 func (kv *KV) Del(key []byte) (deleted bool, err error) {
@@ -208,6 +226,10 @@ func (kv *KV) Del(key []byte) (deleted bool, err error) {
 	return abortOrCommit(tx, deleted, err)
 }
 
+// 你来实现（事务内查询。对 LSM-Tree 来说只是多叠一层:NewTX 里已把 tx.levels 拼成
+// [tx.updates(事务改动,最新) + kv.mem + 各层 SSTable],这里照常归并 + 过滤墓碑即可）:
+//  1. tx.levels.Seek(key) 拿多层归并迭代器;透传 error
+//  2. filterDeleted(iter) 跳墓碑后 return
 func (tx *KVTX) Seek(key []byte) (SortedKVIter, error)
 
 func filterDeleted(iter SortedKVIter) (SortedKVIter, error) {

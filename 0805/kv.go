@@ -56,6 +56,12 @@ func (kv *KV) applyTX(tx *KVTX) error {
 	return nil
 }
 
+// 你来实现（0805 版 Commit 写 log,相比 0804 多了「原子性」:用 EntryAdd/EntryDel 记录每条改动,
+// 最后由 Log.Commit 写一条 EntryCommit 标记 + fsync。defer ResetTX 是回滚:若中途写失败,把 log 的
+// offset 退回事务开始处(committed),下次写覆盖掉这半个事务,绝不让残缺记录生效）:
+//  1. defer kv.log.ResetTX()（失败即回滚 offset 到 committed 处）
+//  2. tx.updates.Iter() 遍历:op = iter.Deleted()?EntryDel:EntryAdd;kv.log.Write(&Entry{key:..., val:..., op:op});写失败 return err
+//  3. 遍历自身出错用 check;最后 return kv.log.Commit()(写 EntryCommit + fsync + 推进 committed)
 func (kv *KV) updateLog(tx *KVTX) error
 
 func (kv *KV) updateMem(tx *KVTX) {
@@ -77,6 +83,12 @@ func (tx *KVTX) NewTX() *KVTX {
 	return inner
 }
 
+// 你来实现（嵌套事务的提交:内层事务(如单条 SQL 语句)commit 时不落 log,只把自己的改动「上交」给
+// 外层事务的缓冲。这样单条语句能整体回滚,只有最外层事务(target 是 *KV)commit 时才真正写 log。
+// 对比:最外层的 applyTX 走的是 kv.updateLog+updateMem;嵌套这层只是搬运 updates）:
+//  1. inner.updates.Iter() 遍历内层的每条改动
+//  2. iter.Deleted() → tx.updates.Del(key);否则 tx.updates.Set(key, val)(并进外层缓冲)
+//  3. 内存操作 check;return nil
 func (tx *KVTX) applyTX(inner *KVTX) error
 
 func (kv *KV) Open() (err error) {

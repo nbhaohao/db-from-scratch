@@ -110,6 +110,13 @@ type RowIterator struct {
 	row     Row
 }
 
+// 你来实现（把迭代器当前指向的一条 KV 解成一个 Row。索引「查询」的关键:走二级索引时,KV 里只存了
+// 索引列+主键、没有整行数据,要拿其中的主键「回表」——再查一次主键索引才拿到完整行(indexNo>0 分支)）:
+//  1. iter 无效 → return false,nil
+//  2. iter.row.DecodeKey(schema, indexNo, 当前 key) 先从 key 解出各列(含主键);ErrOutOfRange 属程序 bug 用 check 排除,其它 error 透传
+//  3. indexNo>0(二级索引):用解出的主键 iter.db.Select(schema, row) 回表取整行;ok=false → errors.New(inconsistent index)
+//  4. indexNo==0(主键索引):key 已含主键,直接 iter.row.DecodeVal(schema, 当前 val) 把 val 里其余列解出来
+//  5. return true,nil
 func (iter *RowIterator) decodeKVIter() (bool, error)
 
 func (iter *RowIterator) Valid() bool {

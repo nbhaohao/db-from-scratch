@@ -51,6 +51,12 @@ func (log *Log) ResetTX() {
 	log.writer.offset = log.writer.committed
 }
 
+// 你来实现（启动时读一条 log 记录并维护 offset/committed。事务原子性的「读」半边:只有读到
+// EntryCommit 标记,才认为它之前的记录都已提交、可生效——半个事务(没写完 commit 就断电)会被丢弃）:
+//  1. ent.Decode(&log.reader) 解一条;若 err 是 io.EOF/io.ErrUnexpectedEOF/ErrBadSum(到文件尾或半条坏记录)→ return true(eof),nil
+//  2. 其它 err → return false,err 透传
+//  3. 正常读到:若 ent.op==EntryCommit,把 log.writer.offset 和 log.writer.committed 都推进到 log.reader.offset(标记「已提交到这里」)
+//  4. return false,nil
 func (log *Log) Read(ent *Entry) (eof bool, err error)
 
 func (log *Log) Truncate() error {
