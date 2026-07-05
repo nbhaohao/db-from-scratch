@@ -1,7 +1,12 @@
 package db0701
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"hash/crc32"
+	"io"
 	"os"
+	"slices"
 )
 
 type KVMetaStore struct {
@@ -52,7 +57,27 @@ func openMetafile(filename string) (fp *os.File, data KVMetaData, err error) {
 //  3. sum=b[0:4]、size=b[4:8]；若 b 装不下 8+size → 同样当空槽返回
 //  4. crc32.ChecksumIEEE 重算 b[4:8+size]，与 sum 不符 → 当空槽返回（checksum 覆盖 size+JSON）
 //  5. json.Unmarshal(b[8:8+size]) 解出 data；解析失败也当空槽；成功 return data, nil
-func readMetaFile(fp *os.File) (data KVMetaData, err error)
+func readMetaFile(fp *os.File) (data KVMetaData, err error) {
+	b, err := io.ReadAll(fp)
+	if err != nil {
+		return KVMetaData{}, err
+	}
+	if len(b) <= 8 {
+		return KVMetaData{}, nil
+	}
+	sum := binary.LittleEndian.Uint32(b[0:4])
+	size := binary.LittleEndian.Uint32(b[4:8])
+	if uint64(len(b)) < uint64(8+size) {
+		return KVMetaData{}, nil
+	}
+	if crc32.ChecksumIEEE(b[4:8+size]) != sum {
+		return KVMetaData{}, nil
+	}
+	if err := json.Unmarshal(b[8:8+size], &data); err != nil {
+		return KVMetaData{}, nil
+	}
+	return data, nil
+}
 
 // 你来实现（把 KVMetaData 序列化写进 meta 文件——double buffering 的「写」一半。写完 fsync，
 // 配合 Set() 只覆盖版本较小的那个槽，断电后坏槽被识别、好槽还在，做到原子更新）:
@@ -61,7 +86,17 @@ func readMetaFile(fp *os.File) (data KVMetaData, err error)
 //  3. 先把 JSON 长度(len(b)-8)写进 b[4:8]，再把 crc32.ChecksumIEEE(b[4:]) 写进 b[0:4]（顺序不能反：先填 size 再算 crc）
 //  4. fp.WriteAt(b, 0) 覆盖写到文件开头；透传错误
 //  5. fp.Sync() 落盘并 return 它的结果
-func writeMetaFile(fp *os.File, data KVMetaData) error
+func writeMetaFile(fp *os.File, data KVMetaData) error {
+	b, err := json.Marshal(data)
+	check(err == nil)
+	b = slices.Concat(make([]byte, 8), b)
+	binary.LittleEndian.PutUint32(b[4:8], uint32(len(b)-8))
+	binary.LittleEndian.PutUint32(b[0:4], crc32.ChecksumIEEE(b[4:]))
+	if _, err = fp.WriteAt(b, 0); err != nil {
+		return err
+	}
+	return fp.Sync()
+}
 
 func (meta *KVMetaStore) current() int {
 	if meta.slots[0].data.Version > meta.slots[1].data.Version {
