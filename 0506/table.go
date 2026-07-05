@@ -255,7 +255,34 @@ func makePKey(schema *Schema, pkey []NamedCell) (Row, error) {
 //	 - op == OP_EQ：从 left/right 里认出 string(列名) 和 *Cell(值)——列名可能在左也可能在右，先试 left，不是 string 就交换 left/right 再试
 //	     成功就 append(out, NamedCell{name, *cell})
 //	 - 其他（如 OP_GT）：return nil, false（只认 AND 连接的等式，范围查询留给下一关）
-func matchAllEq(cond interface{}, out []NamedCell) ([]NamedCell, bool)
+func matchAllEq(cond interface{}, out []NamedCell) ([]NamedCell, bool) {
+	binop, ok := cond.(*ExprBinOp)
+	if ok && binop.op == OP_AND {
+		if out, ok = matchAllEq(binop.left, out); !ok {
+			return nil, false
+		}
+		if out, ok = matchAllEq(binop.right, out); !ok {
+			return nil, false
+		}
+		return out, true
+	} else if ok && binop.op == OP_EQ {
+		left, right := binop.left, binop.right
+		name, ok := left.(string)
+		if !ok {
+			left, right = right, left
+			name, ok = left.(string)
+		}
+		if !ok {
+			return nil, false
+		}
+		cell, ok := right.(*Cell)
+		if !ok {
+			return nil, false
+		}
+		return append(out, NamedCell{name, *cell}), true
+	}
+	return nil, false
+}
 
 func matchPKey(schema *Schema, cond interface{}) (Row, error) {
 	if keys, ok := matchAllEq(cond, nil); ok {

@@ -422,6 +422,27 @@ func (p *Parser) parseAtom() (interface{}, error) {
 //  2. 循环：每轮试 tryPunctuation("+") / tryPunctuation("-")，命中就再 parseAtom() 拿 right，
 //     令 left = &ExprBinOp{op: 对应的 OP_ADD/OP_SUB, left: left, right: right}——把已有结果包成新节点的左子树 = 左结合
 //  3. 一轮里没命中任何符号就退出循环，返回 left
-func (p *Parser) parseAdd() (interface{}, error)
+func (p *Parser) parseAdd() (interface{}, error) {
+	left, err := p.parseAtom()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		var op ExprOp
+		if p.tryPunctuation("+") {
+			op = OP_ADD
+		} else if p.tryPunctuation("-") {
+			op = OP_SUB
+		} else {
+			break
+		}
+		right, err := p.parseAtom()
+		if err != nil {
+			return nil, err
+		}
+		left = &ExprBinOp{op: op, left: left, right: right}
+	}
+	return left, nil
+}
 
 // UzBVUkNF https://systems-programming.org/

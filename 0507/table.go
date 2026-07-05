@@ -276,6 +276,91 @@ func matchAllEq(cond interface{}, out []NamedCell) ([]NamedCell, bool) {
 	return nil, false
 }
 
+func asNameList(expr interface{}) (out []string, ok bool) {
+	switch e := expr.(type) {
+	case string:
+		return []string{e}, true
+	case *ExprTuple:
+		for _, kid := range e.kids {
+			if s, ok := kid.(string); ok {
+				out = append(out, s)
+			} else {
+				return nil, false
+			}
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+func asCellList(expr interface{}) (out []Cell, ok bool) {
+	switch e := expr.(type) {
+	case *Cell:
+		return []Cell{*e}, true
+	case *ExprTuple:
+		for _, kid := range e.kids {
+			if s, ok := kid.(*Cell); ok {
+				out = append(out, *s)
+			} else {
+				return nil, false
+			}
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+func matchCmp(cond interface{}) (ExprOp, []string, []Cell, bool) {
+	binop, ok := cond.(*ExprBinOp)
+	if !ok {
+		return 0, nil, nil, false
+	}
+	switch binop.op {
+	case OP_LE, OP_GE, OP_LT, OP_GT:
+	default:
+		return 0, nil, nil, false
+	}
+
+	op := binop.op
+	left, right := binop.left, binop.right
+	names, ok := asNameList(left)
+	if !ok {
+		left, right = right, left
+		names, ok = asNameList(left)
+		switch op {
+		case OP_LE:
+			op = OP_GE
+		case OP_GE:
+			op = OP_LE
+		case OP_LT:
+			op = OP_GT
+		case OP_GT:
+			op = OP_LT
+		}
+	}
+	if !ok {
+		return 0, nil, nil, false
+	}
+	cells, ok := asCellList(right)
+	if !ok {
+		return 0, nil, nil, false
+	}
+	return op, names, cells, true
+}
+
+func isPKeyPrefix(schema *Schema, cols []string, cells []Cell) bool {
+	if len(cols) != len(cells) || len(cols) > len(schema.Cols) {
+		return false
+	}
+	for i := range cols {
+		col := schema.Cols[schema.PKey[i]]
+		if col.Name != cols[i] || col.Type != cells[i].Type {
+			return false
+		}
+	}
+	return true
+}
+
 // 你来实现（从条件里识别范围区间，转成 RangeReq；就是一堆 if-else）：
 //
 //	binop, ok := cond.(*ExprBinOp)
@@ -283,7 +368,47 @@ func matchAllEq(cond interface{}, out []NamedCell) ([]NamedCell, bool) {
 //	     两边方向(升/降 isDescending)要一致；降序则交换起止，组成双边 RangeReq{StartCmp, StopCmp, Start, Stop}
 //	 - 单个比较：matchCmp 一次 + isPKeyPrefix 校验；Stop 为 nil，StopCmp 按方向取 OP_LE/OP_GE = 单边区间
 //	 - 都不匹配：return nil, false
-func matchRange(schema *Schema, cond interface{}) (*RangeReq, bool)
+func matchRange(schema *Schema, cond interface{}) (*RangeReq, bool) {
+	binop, ok := cond.(*ExprBinOp)
+	if ok && binop.op == OP_AND {
+		op1, cols1, cells1, ok := matchCmp(binop.left)
+		if !ok || !isPKeyPrefix(schema, cols1, cells1) {
+			return nil, false
+		}
+		op2, cols2, cells2, ok := matchCmp(binop.right)
+		if !ok || !isPKeyPrefix(schema, cols2, cells2) {
+			return nil, false
+		}
+		if isDescending(op1) != isDescending(op2) {
+			return nil, false
+		}
+		if isDescending(op1) {
+			op1, op2, cells1, cells2 = op2, op1, cells2, cells1
+		}
+		return &RangeReq{
+			StartCmp: op1,
+			StopCmp:  op2,
+			Start:    cells1,
+			Stop:     cells2,
+		}, true
+	} else if ok {
+		op1, cols1, cells1, ok := matchCmp(cond)
+		if !ok || !isPKeyPrefix(schema, cols1, cells1) {
+			return nil, false
+		}
+		op2 := OP_LE
+		if isDescending(op1) {
+			op2 = OP_GE
+		}
+		return &RangeReq{
+			StartCmp: op1,
+			StopCmp:  op2,
+			Start:    cells1,
+			Stop:     nil,
+		}, true
+	}
+	return nil, false
+}
 
 func makeRange(schema *Schema, cond interface{}) (*RangeReq, error) {
 	if keys, ok := matchAllEq(cond, nil); ok {

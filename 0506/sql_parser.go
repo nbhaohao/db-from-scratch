@@ -218,7 +218,18 @@ func (p *Parser) parseSelect(out *StmtSelect) (err error) {
 //  1. 要求 tryKeyword("WHERE")，否则报 expect keyword
 //  2. expr = parseExpr()（条件本身就是个表达式，如 a = 1 AND b = 2）
 //  3. 要求 tryPunctuation(";") 结尾，返回 expr
-func (p *Parser) parseWhere() (expr interface{}, err error)
+func (p *Parser) parseWhere() (expr interface{}, err error) {
+	if !p.tryKeyword("WHERE") {
+		return nil, errors.New("expect keyword")
+	}
+	if expr, err = p.parseExpr(); err != nil {
+		return nil, err
+	}
+	if !p.tryPunctuation(";") {
+		return nil, errors.New("expect ;")
+	}
+	return expr, nil
+}
 
 func (p *Parser) parseCommaList(item func() error) error {
 	if !p.tryPunctuation("(") {

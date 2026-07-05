@@ -429,7 +429,27 @@ type ExprTuple struct {
 //  1. 用 parseCommaList 收集括号内每个 parseExpr() 到 kids
 //  2. len(kids)==0 → 报 empty tuple；==1 → 返回 kids[0]（只是普通括号，不是元组）；
 //     >=2 → 返回 &ExprTuple{kids}
-func (p *Parser) parseTuple() (expr interface{}, err error)
+func (p *Parser) parseTuple() (expr interface{}, err error) {
+	kids := []interface{}{}
+	err = p.parseCommaList(func() error {
+		expr, err := p.parseExpr()
+		if err != nil {
+			return err
+		}
+		kids = append(kids, expr)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(kids) == 0 {
+		return nil, errors.New("empty tuple")
+	} else if len(kids) == 1 {
+		return kids[0], nil
+	} else {
+		return &ExprTuple{kids}, nil
+	}
+}
 
 func (p *Parser) parseAtom() (expr interface{}, err error) {
 	if p.tryPunctuation("(") {

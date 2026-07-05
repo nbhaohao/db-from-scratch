@@ -412,7 +412,25 @@ type ExprBinOp struct {
 //  1. 若 tryPunctuation("(")：调最浅的 parseExpr() 解析括号内容，再要求 tryPunctuation(")")，返回这棵子树
 //  2. 否则 tryName() 拿列名（返回 string）
 //  3. 都不是就 parseValue() 解析一个常数 *Cell
-func (p *Parser) parseAtom() (expr interface{}, err error)
+func (p *Parser) parseAtom() (expr interface{}, err error) {
+	if p.tryPunctuation("(") {
+		if expr, err = p.parseExpr(); err != nil {
+			return nil, err
+		}
+		if !p.tryPunctuation(")") {
+			return nil, errors.New("expect )")
+		}
+		return expr, nil
+	}
+	if name, ok := p.tryName(); ok {
+		return name, nil
+	}
+	cell := &Cell{}
+	if err := p.parseValue(cell); err != nil {
+		return nil, err
+	}
+	return cell, nil
+}
 
 func (p *Parser) parseExpr() (interface{}, error) {
 	return p.parseAdd()
@@ -452,6 +470,32 @@ func (p *Parser) parseAdd() (interface{}, error) {
 //	 - tokens = {"*", "/"}，ops = {OP_MUL, OP_DIV}
 //	 - 内层仍调 parseAtom()（它已是最深层）
 //	另外：parseAdd 的内层从这一关起要改调 parseMul()，让乘除成为加减的子树
-func (p *Parser) parseMul() (interface{}, error)
+func (p *Parser) parseMul() (interface{}, error) {
+	left, err := p.parseAtom()
+	if err != nil {
+		return nil, err
+	}
+
+	tokens := []string{"*", "/"}
+	ops := []ExprOp{OP_MUL, OP_DIV}
+
+	for ok := true; ok; {
+		ok = false
+		for i := range tokens {
+			if !p.tryPunctuation(tokens[i]) {
+				continue
+			}
+
+			ok = true
+			right, err := p.parseAtom()
+			if err != nil {
+				return nil, err
+			}
+			left = &ExprBinOp{op: ops[i], left: left, right: right}
+			break
+		}
+	}
+	return left, nil
+}
 
 // UzBVUkNF https://systems-programming.org/

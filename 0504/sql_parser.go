@@ -449,7 +449,32 @@ func (p *Parser) parseAtom() (expr interface{}, err error) {
 func (p *Parser) parseBinop(
 	tokens []string, ops []ExprOp,
 	inner func() (interface{}, error),
-) (interface{}, error)
+) (interface{}, error) {
+	check(len(tokens) == len(ops))
+
+	left, err := inner()
+	if err != nil {
+		return nil, err
+	}
+
+	for ok := true; ok; {
+		ok = false
+		for i := range tokens {
+			if !p.tryPunctuation(tokens[i]) && !p.tryKeyword(tokens[i]) {
+				continue
+			}
+
+			ok = true
+			right, err := inner()
+			if err != nil {
+				return nil, err
+			}
+			left = &ExprBinOp{op: ops[i], left: left, right: right}
+			break
+		}
+	}
+	return left, nil
+}
 
 func (p *Parser) parseExpr() (interface{}, error) {
 	return p.parseOr()

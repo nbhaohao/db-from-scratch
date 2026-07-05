@@ -253,7 +253,30 @@ func makePKey(schema *Schema, pkey []NamedCell) (Row, error) {
 //  2. out := make(Row, len(stmt.cols))
 //  3. 遍历 stmt.cols 每个 expr：evalExpr(&schema, row, expr) 求值，结果放进 out[i]
 //  4. 返回 []Row{out}
-func (db *DB) execSelect(stmt *StmtSelect) ([]Row, error)
+func (db *DB) execSelect(stmt *StmtSelect) ([]Row, error) {
+	schema, err := db.GetSchema(stmt.table)
+	if err != nil {
+		return nil, err
+	}
+
+	row, err := makePKey(&schema, stmt.keys)
+	if err != nil {
+		return nil, err
+	}
+	if ok, err := db.Select(&schema, row); err != nil || !ok {
+		return nil, err
+	}
+
+	out := make(Row, len(stmt.cols))
+	for i, expr := range stmt.cols {
+		cell, err := evalExpr(&schema, row, expr)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = *cell
+	}
+	return []Row{out}, nil
+}
 
 func (db *DB) execInsert(stmt *StmtInsert) (count int, err error) {
 	schema, err := db.GetSchema(stmt.table)
@@ -298,7 +321,40 @@ func fillNonPKey(schema *Schema, updates []NamedCell, out Row) error {
 //  3. 遍历每个 assign：cell = evalExpr(&schema, row, assign.expr)（全部基于同一份旧 row，不边算边写）
 //     updates[i] = NamedCell{assign.column, *cell}
 //  4. fillNonPKey 后 db.Update 写回；updated 则 count++
-func (db *DB) execUpdate(stmt *StmtUpdate) (count int, err error)
+func (db *DB) execUpdate(stmt *StmtUpdate) (count int, err error) {
+	schema, err := db.GetSchema(stmt.table)
+	if err != nil {
+		return 0, err
+	}
+
+	row, err := makePKey(&schema, stmt.keys)
+	if err != nil {
+		return 0, err
+	}
+	if ok, err := db.Select(&schema, row); err != nil || !ok {
+		return 0, err
+	}
+
+	updates := make([]NamedCell, len(stmt.value))
+	for i, assign := range stmt.value {
+		cell, err := evalExpr(&schema, row, assign.expr)
+		if err != nil {
+			return 0, err
+		}
+		updates[i] = NamedCell{column: assign.column, value: *cell}
+	}
+	if err = fillNonPKey(&schema, updates, row); err != nil {
+		return 0, err
+	}
+	updated, err := db.Update(&schema, row)
+	if err != nil {
+		return 0, err
+	}
+	if updated {
+		count++
+	}
+	return count, nil
+}
 
 func (db *DB) execDelete(stmt *StmtDelete) (count int, err error) {
 	schema, err := db.GetSchema(stmt.table)

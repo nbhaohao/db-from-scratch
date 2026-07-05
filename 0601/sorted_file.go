@@ -1,6 +1,7 @@
 package db0601
 
 import (
+	"encoding/binary"
 	"os"
 )
 
@@ -42,6 +43,63 @@ func (file *SortedFile) Close() error {
 //	   d. nkeys++
 //	5. 循环里每个 WriteAt / iter.Next 的 err 都要检查并 return err
 //	6. check(nkeys == kv.Size()) 断言写出的数量和声称的一致，最后 return file.fp.Sync() 落盘
-func (file *SortedFile) CreateFromSorted(kv SortedKV) (err error)
+func (file *SortedFile) CreateFromSorted(kv SortedKV) (err error) {
+	file.fp, err = createFileSync(file.FileName)
+	if err != nil {
+		return err
+	}
+
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:8], uint64(kv.Size()))
+	if _, err = file.fp.WriteAt(buf[:8], 0); err != nil {
+		return err
+	}
+
+	offset := uint64(8 + 8*kv.Size())
+	iter, err := kv.Iter()
+	if err != nil {
+		return err
+	}
+
+	nkeys := 0
+	for ; iter.Valid(); err = iter.Next() {
+		if err != nil {
+			return err
+		}
+
+		key := iter.Key()
+		val := iter.Val()
+
+		binary.LittleEndian.PutUint64(buf[:8], offset)
+		if _, err = file.fp.WriteAt(buf[:8], int64(8+8*nkeys)); err != nil {
+			return err
+		}
+
+		binary.LittleEndian.PutUint32(buf[0:4], uint32(len(key)))
+		binary.LittleEndian.PutUint32(buf[4:8], uint32(len(val)))
+		if _, err = file.fp.WriteAt(buf[:8], int64(offset)); err != nil {
+			return err
+		}
+		offset += 8
+
+		if _, err = file.fp.WriteAt(key, int64(offset)); err != nil {
+			return err
+		}
+		offset += uint64(len(key))
+
+		if _, err = file.fp.WriteAt(val, int64(offset)); err != nil {
+			return err
+		}
+		offset += uint64(len(val))
+
+		nkeys++
+	}
+	if err != nil {
+		return err
+	}
+
+	check(nkeys == kv.Size())
+	return file.fp.Sync()
+}
 
 // UzBVUkNF https://systems-programming.org/

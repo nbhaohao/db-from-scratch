@@ -195,14 +195,44 @@ func (p *Parser) parseEqual(out *NamedCell) error {
 //  1. tryName() 拿列名写进 out.column，失败报 expect column
 //  2. 要求 tryPunctuation("=")，失败报 expect =
 //  3. out.expr = parseExpr()（右边是任意表达式，不再只是常数）
-func (p *Parser) parseAssign(out *ExprAssign) (err error)
+func (p *Parser) parseAssign(out *ExprAssign) (err error) {
+	var ok bool
+	out.column, ok = p.tryName()
+	if !ok {
+		return errors.New("expect column")
+	}
+	if !p.tryPunctuation("=") {
+		return errors.New("expect =")
+	}
+	out.expr, err = p.parseExpr()
+	return err
+}
 
 // 你来实现（select 的输出列从「列名」升级成「表达式」）：
 //  1. 循环直到 tryKeyword("FROM")：非首列要求逗号分隔，每列 parseExpr() 收进 out.cols（关键改动：tryName 换成 parseExpr）
 //  2. 列表为空报错
 //  3. tryName() 拿表名写进 out.table
 //  4. 交给 parseWhere 解析 WHERE 部分
-func (p *Parser) parseSelect(out *StmtSelect) error
+func (p *Parser) parseSelect(out *StmtSelect) error {
+	for !p.tryKeyword("FROM") {
+		if len(out.cols) > 0 && !p.tryPunctuation(",") {
+			return errors.New("expect comma")
+		}
+		expr, err := p.parseExpr()
+		if err != nil {
+			return err
+		}
+		out.cols = append(out.cols, expr)
+	}
+	if len(out.cols) == 0 {
+		return errors.New("expect column list")
+	}
+	var ok bool
+	if out.table, ok = p.tryName(); !ok {
+		return errors.New("expect table name")
+	}
+	return p.parseWhere(&out.keys)
+}
 
 func (p *Parser) parseWhere(out *[]NamedCell) error {
 	if !p.tryKeyword("WHERE") {
@@ -322,7 +352,30 @@ func (p *Parser) parseInsert(out *StmtInsert) error {
 //  1. tryName() 拿表名；要求 tryKeyword("SET")
 //  2. 循环直到 WHERE：非首个要求逗号，每个 parseAssign(&expr) 收进 out.value（关键改动：parseEqual 换成 parseAssign）
 //  3. 赋值列表为空报错，最后交给 parseWhere
-func (p *Parser) parseUpdate(out *StmtUpdate) error
+func (p *Parser) parseUpdate(out *StmtUpdate) error {
+	var ok bool
+	if out.table, ok = p.tryName(); !ok {
+		return errors.New("expect table name")
+	}
+	if !p.tryKeyword("SET") {
+		return errors.New("expect SET")
+	}
+	for !p.tryKeyword("WHERE") {
+		expr := ExprAssign{}
+		if len(out.value) > 0 && !p.tryKeyword(",") {
+			return errors.New("expect ,")
+		}
+		if err := p.parseAssign(&expr); err != nil {
+			return err
+		}
+		out.value = append(out.value, expr)
+	}
+	if len(out.value) == 0 {
+		return errors.New("expect assignment list")
+	}
+	p.pos -= len("WHERE")
+	return p.parseWhere(&out.keys)
+}
 
 func (p *Parser) parseDelete(out *StmtDelete) error {
 	var ok bool
