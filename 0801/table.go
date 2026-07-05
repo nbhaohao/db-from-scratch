@@ -184,7 +184,39 @@ func (db *DB) ExecStmt(stmt interface{}) (r SQLResult, err error) {
 //  3. 每组列名用 lookupColumns 转成列下标 index;i>0(二级索引)时 addPKeyToIndex(index, schema.Indices[0]) 把主键列追加进去
 //  4. append 进 schema.Indices(主键自然落在 Indices[0])
 //  5. json.Marshal(schema) 序列化后 db.KV.Set([]byte("@schema_"+stmt.table), val) 存起来;成功后更新 db.tables 缓存
-func (db *DB) execCreateTable(stmt *StmtCreatTable) (err error)
+func (db *DB) execCreateTable(stmt *StmtCreatTable) (err error) {
+	if _, err := db.GetSchema(stmt.table); err == nil {
+		return errors.New("duplicate table name")
+	}
+
+	schema := Schema{
+		Table: stmt.table,
+		Cols:  stmt.cols,
+	}
+
+	indices := append([][]string{stmt.pkey}, stmt.indices...)
+	for i, names := range indices {
+		index, err := lookupColumns(schema.Cols, names)
+		if err != nil {
+			return err
+		}
+		if i > 0 {
+			index = addPKeyToIndex(index, schema.Indices[0])
+		}
+		schema.Indices = append(schema.Indices, index)
+	}
+
+	val, err := json.Marshal(schema)
+	if err != nil {
+		return err
+	}
+	if _, err = db.KV.SetEx([]byte("@schema_"+stmt.table), val, ModeInsert); err != nil {
+		return err
+	}
+
+	db.tables[stmt.table] = schema
+	return nil
+}
 
 func (db *DB) GetSchema(table string) (Schema, error) {
 	schema, ok := db.tables[table]
