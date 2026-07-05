@@ -2,6 +2,8 @@ package db0605
 
 import (
 	"bytes"
+	"os"
+	"path"
 	"slices"
 )
 
@@ -131,7 +133,14 @@ func (kv *KV) Del(key []byte) (deleted bool, err error) {
 //  1. m := MergedSortedKV{&kv.mem, &kv.main}(mem 在前 = 优先级高)
 //  2. iter, err := m.Seek(key)(0605 给 MergedSortedKV 新增的 Seek，k 路归并定位；出错 return nil, err)
 //  3. return filterDeleted(iter)——跳过开头的墓碑并包一层 NoDeletedIter(gen 已提供)
-func (kv *KV) Seek(key []byte) (SortedKVIter, error)
+func (kv *KV) Seek(key []byte) (SortedKVIter, error) {
+	m := MergedSortedKV{&kv.mem, &kv.main}
+	iter, err := m.Seek(key)
+	if err != nil {
+		return nil, err
+	}
+	return filterDeleted(iter)
+}
 
 func filterDeleted(iter SortedKVIter) (SortedKVIter, error) {
 	for iter.Valid() && iter.Deleted() {
@@ -223,6 +232,38 @@ func (kv *KV) Range(start, stop []byte, desc bool) (*RangedKVIter, error) {
 //  2. 原子替换:关掉旧 kv.main、关掉刚写好的 file，renameSync(file.FileName, kv.main.FileName)(rename + 对目录 fsync)。
 //     替换失败时尽量把 kv.main 重新 Open 回来再 return err；成功后 kv.main.Open() 重新打开这个新文件
 //  3. 清空:kv.mem.Clear() + return kv.log.Truncate()(数据已进 SSTable，log 可以丢了)
-func (kv *KV) Compact() error
+func (kv *KV) Compact() error {
+	tmp, err := os.CreateTemp(path.Dir(kv.main.FileName), "*.sst")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	defer os.Remove(tmpName)
+
+	file := SortedFile{FileName: tmpName}
+	m := MergedSortedKV{&kv.mem, &kv.main}
+	if err = file.CreateFromSorted(m); err != nil {
+		return err
+	}
+
+	_ = kv.main.Close()
+	if err = file.Close(); err != nil {
+		_ = kv.main.Open()
+		return err
+	}
+	if err = renameSync(file.FileName, kv.main.FileName); err != nil {
+		_ = kv.main.Open()
+		return err
+	}
+	if err = kv.main.Open(); err != nil {
+		return err
+	}
+
+	kv.mem.Clear()
+	return kv.log.Truncate()
+}
 
 // UzBVUkNF https://systems-programming.org/

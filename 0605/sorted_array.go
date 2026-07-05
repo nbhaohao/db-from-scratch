@@ -92,7 +92,21 @@ func (arr *SortedArray) Key(i int) []byte {
 //  3. 若 updated:ok(已存在)→ arr.vals[idx]=val 且 arr.deleted[idx]=false(清墓碑)；
 //     否则用 slices.Insert 在 idx 处把 key、val 各插进去，同时给 arr.deleted 插入 false
 //  4. return updated, nil
-func (arr *SortedArray) Set(key []byte, val []byte) (updated bool, err error)
+func (arr *SortedArray) Set(key []byte, val []byte) (updated bool, err error) {
+	idx, ok := slices.BinarySearchFunc(arr.keys, key, bytes.Compare)
+	updated = !ok || arr.deleted[idx] || !bytes.Equal(val, arr.vals[idx])
+	if updated {
+		if ok {
+			arr.vals[idx] = val
+			arr.deleted[idx] = false
+		} else {
+			arr.keys = slices.Insert(arr.keys, idx, key)
+			arr.vals = slices.Insert(arr.vals, idx, val)
+			arr.deleted = slices.Insert(arr.deleted, idx, false)
+		}
+	}
+	return updated, nil
+}
 
 // 你来实现（删除一对 KV。两层结构下上层不能物理删——否则会把下层 SSTable 里的旧值查出来，
 // 所以要留一个 deleted=true 的墓碑盖住下层）:
@@ -100,6 +114,21 @@ func (arr *SortedArray) Set(key []byte, val []byte) (updated bool, err error)
 //  2. 若 exist:arr.vals[idx]=nil、arr.deleted[idx]=true(就地变墓碑)，return true, nil
 //  3. 否则:在 idx 处 slices.Insert 一个 val=nil、deleted=true 的墓碑，return false, nil
 //     (即使本层没有这个 key 也要插墓碑，因为它可能藏在下层 SSTable 里)
-func (arr *SortedArray) Del(key []byte) (deleted bool, err error)
+func (arr *SortedArray) Del(key []byte) (deleted bool, err error) {
+	idx, ok := slices.BinarySearchFunc(arr.keys, key, bytes.Compare)
+	exist := ok && !arr.deleted[idx]
+	if exist {
+		arr.vals[idx] = nil
+		arr.deleted[idx] = true
+		return true, nil
+	}
+
+	if !ok {
+		arr.keys = slices.Insert(arr.keys, idx, key)
+		arr.vals = slices.Insert(arr.vals, idx, nil)
+		arr.deleted = slices.Insert(arr.deleted, idx, true)
+	}
+	return false, nil
+}
 
 // UzBVUkNF https://systems-programming.org/
